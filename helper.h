@@ -1,0 +1,26 @@
+void init_keypad();
+void init_TIM2();
+int get_key_press();
+void spi_cmd(char b);
+void spi_data(char b);
+void spi_init_lcd(void);
+void dma_spi_init_lcd(void);
+void circdma_display1(const char *s);
+void circdma_display2(const char *s);
+void init_RTC();
+void rtcGetTime(char* timeStr);
+void init_TIM14();
+void get_char(char key);
+
+void (*cmd)(char b) = 0;
+void (*data)(char b) = 0;
+void (*display1)(const char *) = 0;
+void (*display2)(const char *) = 0;
+int8_t history[16] = {0};
+int8_t lookup[16] = {1,4,7,0xe,2,5,8,0,3,6,9,0xf,0xa,0xb,0xc,0xd};
+char char_lookup[16] = {'1','4','7','*','2','5','8','0','3','6','9','#','A','B','C','D'};
+int timeofday = 9;
+char clockTime[16];
+int row = 1;
+char keys[16] = {"Key Pressed:"};
+//char key;
