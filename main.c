@@ -63,11 +63,9 @@ void init_keypad() {
 	GPIOA->AFR[0] |= (2 << (4 * 5)) | (2 << (4 * 1)) | (2 << (4 * 2)) | (2 << (4 * 3));
 	GPIOA->PUPDR |= GPIO_PUPDR_PUPDR5_1 | GPIO_PUPDR_PUPDR1_1 | GPIO_PUPDR_PUPDR2_1 | GPIO_PUPDR_PUPDR3_1;
 }
-
 void init_TIM2() {
 	RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
-	TIM2->PSC = 4800;
-	TIM2->ARR = 1000;
+
 	//channel 1
 	TIM2->CCMR1 |= TIM_CCMR1_CC1S_0;
 	TIM2->CCMR1 |= TIM_CCMR1_IC1F_0 | TIM_CCMR1_IC1F_1 | TIM_CCMR1_IC1F_2 | TIM_CCMR1_IC1F_3;
@@ -105,81 +103,108 @@ void init_TIM2() {
 	NVIC_SetPriority(TIM2_IRQn,1);
 }
 void TIM2_IRQHandler() {
-	//TIM2->SR &= ~TIM_SR_UIF;
+	int discard __attribute__((unused));
 
 	if ((TIM2->SR & TIM_SR_CC1IF) != 0) {
-		TIM2->SR &= ~TIM_SR_CC1IF;
-		switch(row){
-		case 1: get_char('1');
+		discard = TIM2->CCR1;
+		press = 1;
+		switch(col){
+		case 1: key = '1';
+				value = 1;
 				break;
-		case 2: get_char('2');
+		case 2: key = '2';
+				value = 2;
 				break;
-		case 3: get_char('3');
+		case 3: key = '3';
+				value = 3;
 				break;
-		case 4: get_char('A');
+		case 4: key = 'A';
+				value = 10;
 				break;
 		}
 	}
 
 	if ((TIM2->SR & TIM_SR_CC2IF) != 0) {
-		TIM2->SR &= ~TIM_SR_CC2IF;
-		switch(row){
-		case 1: get_char('4');
+		discard = TIM2->CCR2;
+		press = 1;
+		switch(col){
+		case 1: key = '4';
+				value = 4;
 				break;
-		case 2: get_char('5');
+		case 2: key = '5';
+				value = 5;
 				break;
-		case 3: get_char('6');
+		case 3: key = '6';
+				value = 6;
 				break;
-		case 4: get_char('B');
+		case 4: key = 'B';
+				value = 11;
 				break;
 		}
 	}
 
 	if ((TIM2->SR & TIM_SR_CC3IF) != 0) {
-		TIM2->SR &= ~TIM_SR_CC3IF;
-		switch(row){
-		case 1: get_char('7');
+		discard = TIM2->CCR3;
+		press = 1;
+		switch(col){
+		case 1: key = '7';
+				value = 7;
 				break;
-		case 2: get_char('8');
+		case 2: key = '8';
+				value = 8;
 				break;
-		case 3: get_char('9');
+		case 3: key = '9';
+				value = 9;
 				break;
-		case 4: get_char('C');
+		case 4: key = 'C';
+				value = 12;
 				break;
 		}
 	}
 
 	if ((TIM2->SR & TIM_SR_CC4IF) != 0) {
-		TIM2->SR &= ~TIM_SR_CC4IF;
-		switch(row){
-		case 1: get_char('*');
+		discard = TIM2->CCR4;
+		press = 1;
+		switch(col){
+		case 1: key = '*';
+				value = 14;
 				break;
-		case 2: get_char('0');
+		case 2: key = '0';
+				value = 0;
 				break;
-		case 3: get_char('#');
+		case 3: key = '#';
+				value = 15;
 				break;
-		case 4: get_char('D');
+		case 4: key = 'D';
+				value = 13;
 				break;
 		}
 	}
 
-	while((GPIOA->IDR & 0xf) != 0);
+	return;
 }
 
-int get_key_press() {
+
+
+void get_key_press() {
 	while(1) {
-		for(row = 1; row <= 4; row++){
-			GPIOC->BSRR |= 1 << (row - 1);
+		for(col = 1; col <= 4; col++){
+			GPIOC->BSRR |= 1 << (col - 1);
 			nano_wait(1000 * 1000);
-			GPIOC->BRR |= 1 << (row - 1);
+			GPIOC->BRR |= 1 << (col - 1);
+
+			if (press == 1) {
+				press = 0;
+				return;
+			}
 		}
 	}
 }
-
-void get_char(char key) {
+void get_char() {
     keys[12] = key;
     display2(keys);
 }
+
 
 
 void spi_cmd(char b) {
@@ -187,13 +212,11 @@ void spi_cmd(char b) {
     SPI1->DR = b;
 
 }
-
 void spi_data(char b) {
     while((SPI1->SR & SPI_SR_TXE) == 0);
     SPI1->DR = 0x200 + b;
 
 }
-
 void spi_init_lcd(void) {
     RCC->AHBENR |= RCC_AHBENR_GPIOBEN;
     RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
@@ -215,7 +238,6 @@ void spi_init_lcd(void) {
     //SPI1->CR1 |= SPI_CR1_BR_1 | SPI_CR1_BR_0;
     generic_lcd_startup();
 }
-
 void dma_spi_init_lcd(void) {
     spi_init_lcd();
     RCC->AHBENR |= RCC_AHBENR_DMA1EN;
@@ -235,6 +257,8 @@ void dma_spi_init_lcd(void) {
     DMA1_Channel3->CCR |= DMA_CCR_EN;
 }
 
+
+
 // Display a string on line 1 by copying a string into the
 // memory region circularly moved into the display by DMA.
 void circdma_display1(const char *s) {
@@ -253,7 +277,6 @@ void circdma_display1(const char *s) {
         x++;
     }
 }
-
 void circdma_display2(const char *s) {
     int x;
     for(x=0; x<16; x+=1){
@@ -271,47 +294,62 @@ void circdma_display2(const char *s) {
     }
 }
 
-void init_RTC(){
-    // Enable PWR clock
-     RCC_APB1PeriphClockCmd(RCC_APB1Periph_PWR, ENABLE);
-
-     /* Enable the Backup Domain Access */
-     PWR_BackupAccessCmd(ENABLE);
-
-     /* LSI Enable */
-     RCC_LSICmd(ENABLE);
-
-     /* Wait until the LSI crystal is ready */
-     while(RCC_GetFlagStatus(RCC_FLAG_LSIRDY) == RESET){
-     }
-
-     /* Set RTC clock source to LSI */
-     RCC_RTCCLKConfig(RCC_RTCCLKSource_LSI);
 
 
-     /* Enable RTC clock */
-     RCC_RTCCLKCmd(ENABLE);
+void init_RTC(int hr, int min, int h12) {
+	// Enable PWR clock
+	 RCC_APB1PeriphClockCmd(RCC_APB1Periph_PWR, ENABLE);
 
-     /* Waits until the RTC Time and Date registers are synchronized with RTC APB
-      * clock.*/
-     if(RTC_WaitForSynchro() == ERROR) {
-         return;
-     }
+	 /* Enable the Backup Domain Access */
+	 PWR_BackupAccessCmd(ENABLE);
 
-     // setup the RTC prescalers and 12-hour mode
-     RTC_InitTypeDef init;
-     RTC_StructInit(&init);
-     init.RTC_HourFormat = RTC_HourFormat_12;
-     if(RTC_Init(&init) == ERROR) {
-         return;
-     }
+	 /* LSI Enable */
+	 RCC_LSICmd(ENABLE);
 
-     RTC_TimeTypeDef startTime = {11, 59, 57, RTC_H12_PM};
-     if(RTC_SetTime(RTC_Format_BIN, &startTime) == ERROR) {
-         return;
-     }
+	 /* Wait until the LSI crystal is ready */
+	 while(RCC_GetFlagStatus(RCC_FLAG_LSIRDY) == RESET){
+	 }
+
+	 /* Set RTC clock source to LSI */
+	 RCC_RTCCLKConfig(RCC_RTCCLKSource_LSI);
+
+
+	 /* Enable RTC clock */
+	 RCC_RTCCLKCmd(ENABLE);
+
+	 /* Waits until the RTC Time and Date registers are synchronized with RTC APB
+	  * clock.*/
+	 if(RTC_WaitForSynchro() == ERROR) {
+		 return;
+	 }
+
+	 // setup the RTC prescalers and 12-hour mode
+	 RTC_InitTypeDef init;
+	 RTC_StructInit(&init);
+	 init.RTC_HourFormat = RTC_HourFormat_12;
+	 if(RTC_Init(&init) == ERROR) {
+		 return;
+	 }
+
+	if (h12 == 'A') {
+		 RTC_TimeTypeDef startTime = {hr, min, 00, RTC_H12_AM};
+		 if(RTC_SetTime(RTC_Format_BIN, &startTime) == ERROR) {
+			 return;
+		 }
+	}
+	else if (h12 == 'P') {
+		RTC_TimeTypeDef startTime = {hr, min, 00, RTC_H12_PM};
+		if(RTC_SetTime(RTC_Format_BIN, &startTime) == ERROR) {
+			return;
+		}
+	}
+	else {
+		RTC_TimeTypeDef startTime = {11, 59, 57, RTC_H12_PM};
+		if(RTC_SetTime(RTC_Format_BIN, &startTime) == ERROR) {
+			return;
+		}
+	}
 }
-
 void rtcGetTime(char* timeStr) {
     RTC_TimeTypeDef time;
     RTC_GetTime(RTC_Format_BIN, &time);
@@ -330,7 +368,6 @@ void rtcGetTime(char* timeStr) {
     }
 
 }
-
 void init_TIM14() {
 	RCC->APB1ENR |= RCC_APB1ENR_TIM14EN;
 	TIM14->PSC = 48 - 1;
@@ -352,17 +389,292 @@ void TIM14_IRQHandler() {
 	TIM14->SR &= ~TIM_SR_UIF;
 	rtcGetTime(clockTime);
 	display1(clockTime);
-	//nano_wait(100000000);
 }
+
+
+
+void initAlarm(int hr, int min, char h12) {
+    PWR_BackupAccessCmd(ENABLE);
+
+    RTC_AlarmCmd(RTC_Alarm_A, DISABLE);
+    //RTC_AlarmTypeDef init = {12, 02, 00, RTC_H12_AM};
+    if (h12 == 'A') {
+    	RTC_AlarmTypeDef init = {hr, min, 00, RTC_H12_AM};
+
+    	init.RTC_AlarmMask = RTC_AlarmMask_DateWeekDay;
+	RTC->WPR = 0xCA;
+	RTC->WPR = 0x53;
+	RTC->CR |= RTC_CR_ALRAIE;
+	RTC->WPR = 0xFF;
+
+	RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &init);
+	RTC_AlarmCmd(RTC_Alarm_A, ENABLE);
+	EXTI->IMR |= EXTI_IMR_MR17;
+	EXTI->RTSR |= EXTI_RTSR_TR17;
+	NVIC->ISER[0] |= 1 << RTC_IRQn;
+    }
+    else if (h12 == 'P') {
+    	RTC_AlarmTypeDef init = {hr, min, 00, RTC_H12_PM};
+
+    	init.RTC_AlarmMask = RTC_AlarmMask_DateWeekDay;
+	RTC->WPR = 0xCA;
+	RTC->WPR = 0x53;
+	RTC->CR |= RTC_CR_ALRAIE;
+	RTC->WPR = 0xFF;
+
+	RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &init);
+	RTC_AlarmCmd(RTC_Alarm_A, ENABLE);
+	EXTI->IMR |= EXTI_IMR_MR17;
+	EXTI->RTSR |= EXTI_RTSR_TR17;
+	NVIC->ISER[0] |= 1 << RTC_IRQn;
+    }
+}
+void RTC_IRQHandler(){
+    RTC->ISR &= ~RTC_ISR_ALRAF;
+    EXTI->PR |= EXTI_PR_PR17;
+    display2("ALARM!!!");
+    setup_timer16();
+    setup_timer15();
+
+}
+
+
+
+void setup_dac() {
+	RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
+	GPIOA->MODER |= GPIO_MODER_MODER4;
+	RCC->APB1ENR |= RCC_APB1ENR_DACEN;
+	DAC->CR &= ~DAC_CR_EN1;
+	DAC->CR |= DAC_CR_TEN1;
+	DAC->CR |= DAC_CR_TSEL1;
+	DAC->CR |= DAC_CR_EN1;
+}
+void setup_timer6() {
+	RCC->APB1ENR |= RCC_APB1ENR_TIM6EN;
+	TIM6->ARR = 10-1;
+	TIM6->PSC = 48-1;
+	TIM6->DIER |= TIM_DIER_UIE;
+	TIM6->CR1 |= TIM_CR1_CEN;
+
+	NVIC->ISER[0] |= 1<<TIM6_DAC_IRQn;
+}
+void TIM6_DAC_IRQHandler() {
+	DAC->SWTRIGR |= DAC_SWTRIGR_SWTRIG1;
+	TIM6->SR &= ~TIM_SR_UIF;
+
+	offset += step;
+	if ((offset>>16) >= N) {
+		offset -= N<<16;
+	}
+	offset2 += step2;
+	if ((offset2>>16) >= N) {
+		offset2 -= N<<16;
+	}
+	int sample = 0;
+	sample += wavetable[offset>>16];
+	sample += wavetable[offset2>>16];
+	sample = sample / 32 + 2048;
+	if (sample > 4095) {
+		sample = 4095;
+	}
+	else if (sample < 0) {
+		sample = 0;
+	}
+	DAC->DHR12R1 = sample;
+}
+void setup_timer16() {
+    // Student code goes here...
+	RCC->APB2ENR |= RCC_APB2ENR_TIM16EN;
+	TIM16->ARR = 10000 - 1;
+	TIM16->PSC = 1200 - 1;
+	TIM16->DIER |= TIM_DIER_UIE;
+	TIM16->CR1 |= TIM_CR1_CEN;
+
+	NVIC->ISER[0] |= 1<<TIM16_IRQn;
+}
+void TIM16_IRQHandler() {
+	TIM16->SR &= ~TIM_SR_UIF;
+	double array[26] = {783.99, 0, 880, 698.46, 0, 783.99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 932.33, 0, 880, 698.46, 0, 783.99, 0, 0, 0, 0};
+
+	freq = array[i];
+	step = freq * N / 100000.0 * (1 << 16);
+	if (i >= 26)
+		i = 0;
+	else
+		i++;
+
+	freq2 = array[j];
+	step2 = freq2 * N / 100000.0 * (1 << 16);
+	if (j >= 26)
+		j = 0;
+	else
+		j++;
+	/*if (freq == 500) {
+		freq = 1000;
+		step = freq * N / 100000.0 * (1 << 16);
+	}
+	else {
+		freq -= 50;
+		step = (freq) * N / 100000.0 * (1 << 16);
+	}*/
+}
+void setup_timer15() {
+    // Student code goes here...
+	RCC->APB2ENR |= RCC_APB2ENR_TIM15EN;
+	TIM15->ARR = 10000 - 1;
+	TIM15->PSC = 1200 - 1;
+	TIM15->DIER |= TIM_DIER_UIE;
+	TIM15->CR1 |= TIM_CR1_CEN;
+
+	NVIC->ISER[0] |= 1<<TIM15_IRQn;
+}
+void TIM15_IRQHandler() {
+	TIM15->SR &= ~TIM_SR_UIF;
+	double array[26] = {1567.98, 0, 1760, 1396.91, 0, 1567.98, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1864.66, 0, 1760, 1396.91, 0, 1567.98, 0, 0, 0, 0};
+	freq2 = array[j];
+	step2 = freq2 * N / 100000.0 * (1 << 16);
+	if (j >= 26)
+		j = 0;
+	else
+		j++;
+	/*if (freq2 == 500) {
+		freq2 = 0;
+		step2 = freq2 * N / 100000.0 * (1 << 16);
+	}
+	else {
+		freq2 += 50;
+		step2 = (freq2) * N / 100000.0 * (1 << 16);
+	}*/
+}
+
+
+
+void inputAlarm() {
+	int hr_ten;
+	int hr_one;
+	int min_ten;
+	int min_one;
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputAlarmHourTen");
+	while (key != '#')
+		get_key_press();
+
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 1))
+		get_key_press();
+	hr_ten = value;
+	while(key != '*')
+		get_key_press();
+
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputAlarmHourOne");
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 9))
+		get_key_press();
+	hr_one = value;
+	while(key != '*')
+		get_key_press();
+
+
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputAlarmMinTen");
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+
+	while ((value < 0) | (value > 5))
+		get_key_press();
+	min_ten = atoi(&key);
+	while(key != '*')
+		get_key_press();
+
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputAlarmMinOne");
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 9))
+		get_key_press();
+	min_one = value;
+	while(key != '*')
+		get_key_press();
+
+	nano_wait(500 * 1000 * 1000);
+	display2("Great!");
+	initAlarm(hr_ten * 10 + hr_one, min_ten*10 + min_one, 'A');
+
+}
+void inputTime() {
+	int hr_ten;
+	int hr_one;
+	int min_ten;
+	int min_one;
+	int h12;
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputTimeHourTen");
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 1))
+		get_key_press();
+	hr_ten = value;
+	while(key != '*')
+		get_key_press();
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputTimeHourOne");
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 9))
+		get_key_press();
+	hr_one = value;
+	while(key != '*')
+		get_key_press();
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputTimeMinTen");
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 5))
+		get_key_press();
+	min_ten = value;
+	while(key != '*')
+		get_key_press();
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputTimeMinOne");
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 9))
+		get_key_press();
+	min_one = value;
+	while(key != '*')
+		get_key_press();
+
+	nano_wait(500 * 1000 * 1000);
+	display2("Great!");
+	init_RTC(hr_ten * 10 + hr_one, min_ten*10 + min_one, 'P');
+}
+
 
 int main(void)
 {
-    //char time[16];
-    init_RTC();
     init_TIM14();
     init_keypad();
     init_TIM2();
-    get_key_press();
-    //step4(time);
+    setup_dac();
+    setup_timer6();
+    inputTime();
+    inputAlarm();
 
 }
