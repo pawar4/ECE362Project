@@ -36,8 +36,9 @@ char key;
 int value;
 int press = 0;
 int cnt = 0;
-int isAlarmOn = 0;
+int isAlarmOn = 1;
 int answer = 0;
+char eqn[30] = "";
 
 #define RATE 100000
 #define N 1000
@@ -50,4 +51,3 @@ int offset = 0;
 int offset2 = 0;
 int step = 1000 * N / 100000.0 * (1 << 16);
 int step2 = 1000 * N / 100000.0 * (1 << 16);
-
