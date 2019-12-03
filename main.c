@@ -1,305 +1,444 @@
 #include "stm32f0xx.h"
 #include "stm32f0_discovery.h"
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
+#include "helper.h"
 #include <math.h>
-#include "fifo.h"
+// These are function pointers.  They can be called like functions
+// after you set them to point to other functions.
+// e.g.  cmd = bitbang_cmd;
+// They will be set by the stepX() subroutines to point to the new
+// subroutines you write below.
 
-#define UNK -1
-#define NON_INTR 0
-#define INTR 1
+// Prototypes for subroutines in support.c
+void generic_lcd_startup(void);
 
-int __io_putchar(int ch);
-static int putchar_nonirq(int ch);
-int freq = 0;
-void prob3(void);
-void prob4(void);
-void prob5(void);
+// This array will be used with dma_display1() and dma_display2() to mix
+// commands that set the cursor location at zero and 64 with characters.
+//
+uint16_t dispmem[34] = {
+        0x080 + 0,
+        0x220, 0x220, 0x220, 0x220, 0x220, 0x220, 0x220, 0x220,
+        0x220, 0x220, 0x220, 0x220, 0x220, 0x220, 0x220, 0x220,
+        0x080 + 64,
+        0x220, 0x220, 0x220, 0x220, 0x220, 0x220, 0x220, 0x220,
+        0x220, 0x220, 0x220, 0x220, 0x220, 0x220, 0x220, 0x220,
+};
 
-static struct fifo input_fifo;  // input buffer
-static struct fifo output_fifo; // output buffer
-int interrupt_mode = UNK;   // which version of putchar/getchar to use.
-int echo_mode = 1;          // should we echo input characters?
-
-#define RATE 100000
-#define N 1000
-short int wavetable[N];
-
-//=============================================================================
-// This is a version of printf() that will disable interrupts for the
-// USART and write characters directly.  It is intended to handle fatal
-// exceptional conditions.
-// It's also an example of how to create a variadic function.
-static void safe_printf(const char *format, ...) {
-    va_list ap;
-    va_start(ap, format);
-    char buf[80];
-    int len = vsnprintf(buf, sizeof buf, format, ap);
-    int saved_txeie = USART1->CR1 & USART_CR1_TXEIE;
-    USART1->CR1 &= ~USART_CR1_TXEIE;
-    int x;
-    for(x=0; x<len; x++) {
-        putchar_nonirq(buf[x]);
-    }
-    USART1->CR1 |= saved_txeie;
-    va_end(ap);
+//============================================
+//Code not written by group
+//START
+//============================================
+void nano_wait(unsigned int n) {
+    asm(    "        mov r0,%0\n"
+            "repeat: sub r0,#83\n"
+            "        bgt repeat\n" : : "r"(n) : "r0", "cc");
 }
 
-//=======================================================================
-// Simply write a string one char at a time.
-//=======================================================================
-static void putstr(const char *s) {
-    while(*s)
-        __io_putchar(*s++);
+void generic_lcd_startup(void) {
+    nano_wait(100000000); // Give it 100ms to initialize
+    cmd(0x38);  // 0011 NF00 N=1, F=0: two lines
+    cmd(0x0c);  // 0000 1DCB: display on, no cursor, no blink
+    cmd(0x01);  // clear entire display
+    nano_wait(6200000); // clear takes 6.2ms to complete
+    cmd(0x02);  // put the cursor in the home position
+    cmd(0x06);  // 0000 01IS: set display to increment
 }
 
-//=======================================================================
-// Insert a character and echo it.
-// (or, if it's a backspace, remove a char and erase it from the line).
-// If echo_mode is turned off, just insert the character and get out.
-//=======================================================================
-static void insert_echo_char(char ch) {
-    if (ch == '\r')
-        ch = '\n';
-    if (!echo_mode) {
-        fifo_insert(&input_fifo, ch);
-        return;
-    }
-    if (ch == '\b' || ch == '\177') {
-        if (!fifo_empty(&input_fifo)) {
-            char tmp = fifo_uninsert(&input_fifo);
-            if (tmp == '\n')
-                fifo_insert(&input_fifo, '\n');
-            else if (tmp < 32)
-                putstr("\b\b  \b\b");
-            else
-                putstr("\b \b");
-        }
-        return; // Don't put a backspace into buffer.
-    } else if (ch == '\n') {
-        __io_putchar('\n');
-    } else if (ch == 0){
-        putstr("^0");
-    } else if (ch == 28) {
-        putstr("^\\");
-    } else if (ch < 32) {
-        __io_putchar('^');
-        __io_putchar('A'-1+ch);
-    } else {
-        __io_putchar(ch);
-    }
-    fifo_insert(&input_fifo, ch);
-}
+//============================================
+//Code not written by group
+//END
+//============================================
 
-
-//-----------------------------------------------------------------------------
-// Section 6.2
-//-----------------------------------------------------------------------------
-// This should should perform the following
-// 1) Enable clock to GPIO port A
-// 2) Configure PA9 and PA10 to alternate function to use a USART
-//    Note: Configure both MODER and AFRL registers
-// 3) Enable clock to the USART module, it is up to you to determine
-//    which RCC register to use
-// 4) Disable the USART module (hint UE bit in CR1)
-// 5) Configure USART for 8 bits, 1 stop bit and no parity bit
-// 6) Use 16x oversampling
-// 7) Configure for 115200 baud rate
-// 8) Enable the USART for both transmit and receive
-// 9) Enable the USART
-// 10) Wait for TEACK and REACK to be set by hardware in the ISR register
-// 11) Set the 'interrupt_mode' variable to NON_INTR
-void tty_init(void) {
-    // Disable buffers for stdio streams.  Otherwise, the first use of
-    // each stream will result in a *malloc* of 2K.  Not good.
-    setbuf(stdin,0);
-    setbuf(stdout,0);
-    setbuf(stderr,0);
-
-    // Student code goes here...
-    RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
-    GPIOA->MODER |= GPIO_MODER_MODER9_1 | GPIO_MODER_MODER10_1;
-    GPIOA->AFR[1] |= (1 << 4*1) | (1 << 4*2);
-    RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
-    USART1->CR1 &= ~USART_CR1_UE;
-    USART1->CR1 &= ~(1<<12);
-	USART1->CR1 &= ~(1<<28);
-    USART1->CR2 &= ~USART_CR2_STOP;
-    USART1->CR1 &= ~USART_CR1_PCE;
-    USART1->CR1 &= ~USART_CR1_OVER8;
-    USART1->BRR = 0x1a1;
-    USART1->CR1 |= USART_CR1_RE | USART_CR1_TE;
-    USART1->CR1 |= USART_CR1_UE;
-
-    while ((USART1->ISR & USART_ISR_TEACK) == 0);
-    while ((USART1->ISR & USART_ISR_REACK) == 0);
-    interrupt_mode = NON_INTR;
-}
-
-//=======================================================================
-// Enable the USART RXNE interrupt.
-// Remember to enable the right bit in the NVIC registers
-//=======================================================================
-void enable_tty_irq(void) {
-    // Student code goes here...
-	USART1->CR1 |= USART_CR1_RXNEIE;
-	NVIC->ISER[0] |= 1 << USART1_IRQn;
-	interrupt_mode = INTR;
-}
-
-//-----------------------------------------------------------------------------
-// Section 6.3
-//-----------------------------------------------------------------------------
-//=======================================================================
-// This method should perform the following
-// Transmit 'ch' using USART1, remember to wait for transmission register to be
-// empty. Also this function must check if 'ch' is a new line character, if so
-// it must transmit a carriage return before transmitting 'ch' using USART1.
-// Think about this, why must we add a carriage return, what happens otherwise?
-//=======================================================================
-static int putchar_nonirq(int ch) {
-    // Student code goes here...
-	if (ch == '\n'){
-		while((USART1->ISR & USART_ISR_TXE) == 0);
-		USART1->TDR = '\r';
-	}
-	while((USART1->ISR & USART_ISR_TXE) == 0);
-	USART1->TDR = ch;
-	return ch;
-
-}
-
-//-----------------------------------------------------------------------------
-// Section 6.4
-//-----------------------------------------------------------------------------
-// See lab document for description
-static int getchar_nonirq(void) {
-    // Student code goes here...
-	if (USART1->ISR & USART_ISR_ORE){
-		USART1->ICR &= ~USART_ICR_ORECF;
-	}
-	while (!fifo_newline(&input_fifo)) {
-		while((USART1->ISR & USART_ISR_RXNE) == 0);
-		insert_echo_char(USART1->RDR);
-	}
-
-	return fifo_remove(&input_fifo);
-}
-
-//-----------------------------------------------------------------------------
-// Section 6.5
-//-----------------------------------------------------------------------------
-// See lab document for description
-//=======================================================================
-// IRQ invoked for USART1 activity.
-void USART1_IRQHandler(void) {
-    // Student code goes here...
-	if (USART1->ISR & USART_ISR_RXNE){
-		insert_echo_char(USART1->RDR);
-	}
-	if (USART1->ISR & USART_ISR_TXE){
-		if (fifo_empty(&output_fifo)){
-			USART1->CR1 &= ~USART_CR1_TXEIE;
-		}
-		else{
-			USART1->TDR = fifo_remove(&output_fifo);
-		}
-	}
-    //-----------------------------------------------------------------
-    // Leave this checking code here to make sure nothing bad happens.
-    if (USART1->ISR & (USART_ISR_RXNE|
-            USART_ISR_ORE|USART_ISR_NE|USART_ISR_FE|USART_ISR_PE)) {
-        safe_printf("Problem in USART1_IRQHandler: ISR = 0x%x\n", USART1->ISR);
-    }
-}
-
-// See lab document for description
-static int getchar_irq(void) {
-    // Student code goes here...
-	while (!fifo_newline(&input_fifo)){
-		asm("wfi");
-	}
-	return fifo_remove(&input_fifo);
-}
-
-// See lab document for description
-static int putchar_irq(char ch) {
-    // Student code goes here...
-	while (fifo_full(&output_fifo)) {
-		asm("wfi");
-	}
-
-	if (ch == '\n'){
-		fifo_insert(&output_fifo, '\r');
-	}
-	else{
-		fifo_insert(&output_fifo, ch);
-	}
-
-	if ((USART1->CR1 & USART_CR1_TXEIE) == 0){
-		USART1->CR1 |= USART_CR1_TXEIE;
-		USART1_IRQHandler();
-	}
-
-	if (ch == '\n'){
-		while (fifo_full(&output_fifo)){
-			asm("wfi");
-		}
-		fifo_insert(&output_fifo, '\n');
-	}
-}
-
-//=======================================================================
-// Called by the Standard Peripheral library for a write()
-int __io_putchar(int ch) {
-    if (interrupt_mode == INTR)
-        return putchar_irq(ch);
-    else
-        return putchar_nonirq(ch);
-}
-
-//=======================================================================
-// Called by the Standard Peripheral library for a read()
-int __io_getchar(void) {
-    // Choose the right implementation.
-    if (interrupt_mode == INTR)
-        return getchar_irq();
-    else
-        return getchar_nonirq();
-}
-
-//-----------------------------------------------------------------------------
-// Section 6.6
-//-----------------------------------------------------------------------------
-//===========================================================================
-// This function
-// 1) enables clock to port A,
-// 2) sets PA4 to analog mode
-void setup_gpio() {
-    // Student code goes here...
+//Keypad setup
+void init_keypad() {
+    /* Student code goes here */
 	RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
-	GPIOA->MODER |= 0X33f;
+	RCC->AHBENR |= RCC_AHBENR_GPIOCEN;
+
+	GPIOC->MODER &= ~(GPIO_MODER_MODER0 | GPIO_MODER_MODER1 | GPIO_MODER_MODER2 | GPIO_MODER_MODER3);
+	GPIOC->MODER |= GPIO_MODER_MODER0_0 | GPIO_MODER_MODER1_0 | GPIO_MODER_MODER2_0 | GPIO_MODER_MODER3_0;
+
+	GPIOA->MODER &= ~(GPIO_MODER_MODER5 | GPIO_MODER_MODER1 | GPIO_MODER_MODER2 | GPIO_MODER_MODER3);
+	GPIOA->MODER|= GPIO_MODER_MODER5_1 | GPIO_MODER_MODER1_1 | GPIO_MODER_MODER2_1 | GPIO_MODER_MODER3_1;
+	GPIOA->AFR[0] |= (2 << (4 * 5)) | (2 << (4 * 1)) | (2 << (4 * 2)) | (2 << (4 * 3));
+	GPIOA->PUPDR |= GPIO_PUPDR_PUPDR5_1 | GPIO_PUPDR_PUPDR1_1 | GPIO_PUPDR_PUPDR2_1 | GPIO_PUPDR_PUPDR3_1;
+}
+void init_TIM2() {
+	RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+
+	//channel 1
+	TIM2->CCMR1 |= TIM_CCMR1_CC1S_0;
+	TIM2->CCMR1 |= TIM_CCMR1_IC1F_0 | TIM_CCMR1_IC1F_1 | TIM_CCMR1_IC1F_2 | TIM_CCMR1_IC1F_3;
+	TIM2->CCER &= ~(TIM_CCER_CC1P | TIM_CCER_CC1NP);
+	TIM2->CCMR1 &= ~TIM_CCMR1_IC1PSC;
+	TIM2->CCER |= TIM_CCER_CC1E;
+	TIM2->DIER |= TIM_DIER_CC1IE;
+
+	//channel 2
+	TIM2->CCMR1 |= TIM_CCMR1_CC2S_0;
+	TIM2->CCMR1 |= TIM_CCMR1_IC2F_0 | TIM_CCMR1_IC2F_1 | TIM_CCMR1_IC2F_2 | TIM_CCMR1_IC2F_3;
+	TIM2->CCER &= ~(TIM_CCER_CC2P | TIM_CCER_CC2NP);
+	TIM2->CCMR1 &= ~TIM_CCMR1_IC2PSC;
+	TIM2->CCER |= TIM_CCER_CC2E;
+	TIM2->DIER |= TIM_DIER_CC2IE;
+
+	//channel 3
+	TIM2->CCMR2 |= TIM_CCMR2_CC3S_0;
+	TIM2->CCMR2 |= TIM_CCMR2_IC3F_0 | TIM_CCMR2_IC3F_1 | TIM_CCMR2_IC3F_2 | TIM_CCMR2_IC3F_3;
+	TIM2->CCER &= ~(TIM_CCER_CC3P | TIM_CCER_CC3NP);
+	TIM2->CCMR2 &= ~TIM_CCMR2_IC3PSC;
+	TIM2->CCER |= TIM_CCER_CC3E;
+	TIM2->DIER |= TIM_DIER_CC3IE;
+
+	//channel 4
+	TIM2->CCMR2 |= TIM_CCMR2_CC4S_0;
+	TIM2->CCMR2 |= TIM_CCMR2_IC4F_0 | TIM_CCMR2_IC4F_1 | TIM_CCMR2_IC4F_2 | TIM_CCMR2_IC4F_3;
+	TIM2->CCER &= ~(TIM_CCER_CC4P | TIM_CCER_CC4NP);
+	TIM2->CCMR2 &= ~TIM_CCMR2_IC4PSC;
+	TIM2->CCER |= TIM_CCER_CC4E;
+	TIM2->DIER |= TIM_DIER_CC4IE;
+
+	TIM2->CR1 |= TIM_CR1_CEN;
+	NVIC->ISER[0] |= 1<<TIM2_IRQn;
+	NVIC_SetPriority(TIM2_IRQn,1);
+}
+void TIM2_IRQHandler() {
+	int discard __attribute__((unused));
+
+	if ((TIM2->SR & TIM_SR_CC1IF) != 0) {
+		discard = TIM2->CCR1;
+		press = 1;
+		switch(col){
+		case 1: key = '1';
+				value = 1;
+				break;
+		case 2: key = '2';
+				value = 2;
+				break;
+		case 3: key = '3';
+				value = 3;
+				break;
+		case 4: key = 'A';
+				value = 10;
+				break;
+		}
+	}
+
+	if ((TIM2->SR & TIM_SR_CC2IF) != 0) {
+		discard = TIM2->CCR2;
+		press = 1;
+		switch(col){
+		case 1: key = '4';
+				value = 4;
+				break;
+		case 2: key = '5';
+				value = 5;
+				break;
+		case 3: key = '6';
+				value = 6;
+				break;
+		case 4: key = 'B';
+				value = 11;
+				break;
+		}
+	}
+
+	if ((TIM2->SR & TIM_SR_CC3IF) != 0) {
+		discard = TIM2->CCR3;
+		press = 1;
+		switch(col){
+		case 1: key = '7';
+				value = 7;
+				break;
+		case 2: key = '8';
+				value = 8;
+				break;
+		case 3: key = '9';
+				value = 9;
+				break;
+		case 4: key = 'C';
+				value = 12;
+				break;
+		}
+	}
+
+	if ((TIM2->SR & TIM_SR_CC4IF) != 0) {
+		discard = TIM2->CCR4;
+		press = 1;
+		switch(col){
+		case 1: key = '*';
+				value = 14;
+				break;
+		case 2: key = '0';
+				value = 0;
+				break;
+		case 3: key = '#';
+				value = 15;
+				break;
+		case 4: key = 'D';
+				value = 13;
+				break;
+		}
+	}
 }
 
-// This function should enable the clock to the
-// onboard DAC, enable trigger,
-// setup software trigger and finally enable the DAC.
+
+//Get pressed key
+void get_key_press() {
+	while(1) {
+		for(col = 1; col <= 4; col++){
+			GPIOC->BSRR |= 1 << (col - 1);
+			nano_wait(1000 * 1000);
+			GPIOC->BRR |= 1 << (col - 1);
+
+			if (press == 1) {
+				press = 0;
+				return;
+			}
+		}
+	}
+}
+void get_char() {
+    keys[12] = key;
+    display2(keys);
+}
+
+
+//Display SPI setup
+void spi_cmd(char b) {
+    while((SPI1->SR & SPI_SR_TXE) == 0);
+    SPI1->DR = b;
+
+}
+void spi_data(char b) {
+    while((SPI1->SR & SPI_SR_TXE) == 0);
+    SPI1->DR = 0x200 + b;
+
+}
+void spi_init_lcd(void) {
+    RCC->AHBENR |= RCC_AHBENR_GPIOBEN;
+    RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
+    GPIOA->MODER |= GPIO_MODER_MODER15_1;
+    GPIOA->MODER &= ~GPIO_MODER_MODER15_0;
+    GPIOB->MODER |= GPIO_MODER_MODER3_1 | GPIO_MODER_MODER5_1;
+    GPIOB->MODER &= ~(GPIO_MODER_MODER3_0 | GPIO_MODER_MODER5_0);
+    GPIOA->AFR[1] &= ~(0xf<<(4*(15-8)));
+    GPIOB->AFR[0] &= ~(0xf<<(4*(3)));
+    GPIOB->AFR[0] &= ~(0xf<<(4*(5)));
+
+    RCC->APB2ENR |= RCC_APB2ENR_SPI1EN;
+    SPI1->I2SCFGR &= ~SPI_I2SCFGR_I2SMOD;
+    SPI1->CR1 |= SPI_CR1_MSTR | SPI_CR1_BR;
+    SPI1->CR2 = SPI_CR2_SSOE| SPI_CR2_DS_3 | SPI_CR2_DS_0 |SPI_CR2_NSSP;
+    SPI1->CR1 |= SPI_CR1_BIDIMODE | SPI_CR1_BIDIOE;
+    SPI1->CR1 |= SPI_CR1_SPE;
+    //SPI1->CR1 &= ~SPI_CR1_BR;
+    //SPI1->CR1 |= SPI_CR1_BR_1 | SPI_CR1_BR_0;
+    generic_lcd_startup();
+}
+void dma_spi_init_lcd(void) {
+    spi_init_lcd();
+    RCC->AHBENR |= RCC_AHBENR_DMA1EN;
+    DMA1_Channel3->CCR &= ~DMA_CCR_EN;
+    DMA1_Channel3->CMAR = (uint32_t) dispmem;
+    DMA1_Channel3->CPAR = (uint32_t) (&(SPI1->DR));
+    DMA1_Channel3->CNDTR = 34;
+    DMA1_Channel3->CCR |= DMA_CCR_MSIZE_0;
+    DMA1_Channel3->CCR |= DMA_CCR_PSIZE_0;
+    DMA1_Channel3->CCR |= DMA_CCR_DIR;
+    DMA1_Channel3->CCR &= ~DMA_CCR_PINC;
+    DMA1_Channel3->CCR |=DMA_CCR_MINC;
+    DMA1_Channel3->CCR &= ~DMA_CCR_PL;
+    DMA1_Channel3->CCR &=~DMA_CCR_MEM2MEM;
+    SPI1->CR2 |= SPI_CR2_TXDMAEN;
+    DMA1_Channel3->CCR |= DMA_CCR_CIRC;
+    DMA1_Channel3->CCR |= DMA_CCR_EN;
+}
+
+
+
+// Display a string on line 1 by copying a string into the
+// memory region circularly moved into the display by DMA.
+void circdma_display1(const char *s) {
+    int x;
+    for(x=0; x<16; x+=1){
+        if (s[x]){
+            dispmem[x+1] = s[x] | 0x200;
+        }
+        else{
+            break;
+        }
+    }
+
+    while(x<16){
+        dispmem[x+1] = 0x220;
+        x++;
+    }
+}
+void circdma_display2(const char *s) {
+    int x;
+    for(x=0; x<16; x+=1){
+        if (s[x]){
+            dispmem[x+18] = s[x] | 0x200;
+        }
+        else{
+            break;
+        }
+    }
+
+    while(x<16){
+        dispmem[x+18] = 0x220;
+        x++;
+    }
+}
+
+
+//RTC Time setup
+void init_RTC(int hr, int min, int h12) {
+	 RCC_APB1PeriphClockCmd(RCC_APB1Periph_PWR, ENABLE);
+	 PWR_BackupAccessCmd(ENABLE);
+	 RCC_LSICmd(ENABLE);
+	 while(RCC_GetFlagStatus(RCC_FLAG_LSIRDY) == RESET){
+	 }
+
+	 RCC_RTCCLKConfig(RCC_RTCCLKSource_LSI);
+	 RCC_RTCCLKCmd(ENABLE);
+	 if(RTC_WaitForSynchro() == ERROR) {
+		 return;
+	 }
+
+	 RTC_InitTypeDef init;
+	 RTC_StructInit(&init);
+	 init.RTC_HourFormat = RTC_HourFormat_12;
+	 if(RTC_Init(&init) == ERROR) {
+		 return;
+	 }
+
+	if (h12 == 'A') {
+		 RTC_TimeTypeDef startTime = {hr, min, 00, RTC_H12_AM};
+		 if(RTC_SetTime(RTC_Format_BIN, &startTime) == ERROR) {
+			 return;
+		 }
+	}
+	else if (h12 == 'P') {
+		RTC_TimeTypeDef startTime = {hr, min, 00, RTC_H12_PM};
+		if(RTC_SetTime(RTC_Format_BIN, &startTime) == ERROR) {
+			return;
+		}
+	}
+	else {
+		RTC_TimeTypeDef startTime = {11, 59, 57, RTC_H12_PM};
+		if(RTC_SetTime(RTC_Format_BIN, &startTime) == ERROR) {
+			return;
+		}
+	}
+}
+void rtcGetTime(char* timeStr) {
+    RTC_TimeTypeDef time;
+    RTC_GetTime(RTC_Format_BIN, &time);
+    sprintf(timeStr, "%02d:%02d:%02d %s",
+            time.RTC_Hours, time.RTC_Minutes,
+            time.RTC_Seconds,
+            (time.RTC_H12 == RTC_H12_AM ? "AM" : "PM"));
+
+    if (timeStr[9] == 'A')
+    {
+        timeofday = 1;
+    }
+    else
+    {
+        timeofday = 0;
+    }
+}
+void init_TIM14() {
+	RCC->APB1ENR |= RCC_APB1ENR_TIM14EN;
+	TIM14->PSC = 48 - 1;
+	TIM14->ARR = 1000 - 1;
+	TIM14->DIER |= TIM_DIER_UIE;
+
+	cmd = spi_cmd;
+	data = spi_data;
+	display1 = circdma_display1;
+	display2 = circdma_display2;
+	dma_spi_init_lcd();
+	display2(keys);
+
+	TIM14->CR1 |= TIM_CR1_CEN;
+	NVIC->ISER[0] = 1<<TIM14_IRQn;
+	NVIC_SetPriority(TIM14_IRQn,0);
+}
+void TIM14_IRQHandler() {
+	TIM14->SR &= ~TIM_SR_UIF;
+	rtcGetTime(clockTime);
+	if (isAlarmOn == 0)
+		display1(clockTime);
+}
+
+
+//RTC Alarm setup
+void initAlarm(int hr, int min, char h12) {
+    PWR_BackupAccessCmd(ENABLE);
+
+    RTC_AlarmCmd(RTC_Alarm_A, DISABLE);
+    //RTC_AlarmTypeDef init = {12, 02, 00, RTC_H12_AM};
+    if (h12 == 'A') {
+    	RTC_AlarmTypeDef init = {hr, min, 00, RTC_H12_AM};
+
+    	init.RTC_AlarmMask = RTC_AlarmMask_DateWeekDay;
+		RTC->WPR = 0xCA;
+		RTC->WPR = 0x53;
+		RTC->CR |= RTC_CR_ALRAIE;
+		RTC->WPR = 0xFF;
+
+		RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &init);
+		RTC_AlarmCmd(RTC_Alarm_A, ENABLE);
+		EXTI->IMR |= EXTI_IMR_MR17;
+		EXTI->RTSR |= EXTI_RTSR_TR17;
+		NVIC->ISER[0] |= 1 << RTC_IRQn;
+    }
+    else if (h12 == 'P') {
+    	RTC_AlarmTypeDef init = {hr, min, 00, RTC_H12_PM};
+
+    	init.RTC_AlarmMask = RTC_AlarmMask_DateWeekDay;
+		RTC->WPR = 0xCA;
+		RTC->WPR = 0x53;
+		RTC->CR |= RTC_CR_ALRAIE;
+		RTC->WPR = 0xFF;
+
+		RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &init);
+		RTC_AlarmCmd(RTC_Alarm_A, ENABLE);
+		EXTI->IMR |= EXTI_IMR_MR17;
+		EXTI->RTSR |= EXTI_RTSR_TR17;
+		NVIC->ISER[0] |= 1 << RTC_IRQn;
+    }
+}
+void RTC_IRQHandler(){
+    RTC->ISR &= ~RTC_ISR_ALRAF;
+    EXTI->PR |= EXTI_PR_PR17;
+    display2("ALARM!!!!!");
+    //setup_timer16();
+    //setup_timer15();
+    setup_dac();
+    TIM15->CR1 |= TIM_CR1_CEN;
+    NVIC->ISER[0] |= 1<<TIM15_IRQn;
+    //inputMath();
+}
+
+
+//Alarm DAC sound setup
 void setup_dac() {
-    // Student code goes here...
+	RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
+	GPIOA->MODER |= GPIO_MODER_MODER4;
 	RCC->APB1ENR |= RCC_APB1ENR_DACEN;
 	DAC->CR &= ~DAC_CR_EN1;
 	DAC->CR |= DAC_CR_TEN1;
 	DAC->CR |= DAC_CR_TSEL1;
 	DAC->CR |= DAC_CR_EN1;
 }
-
-// This function should,
-// enable clock to timer6,
-// setup pre scalar and arr so that the interrupt is triggered every
-// 10us, enable the timer 6 interrupt, and start the timer.
 void setup_timer6() {
-    // Student code goes here...
 	RCC->APB1ENR |= RCC_APB1ENR_TIM6EN;
 	TIM6->ARR = 10-1;
 	TIM6->PSC = 48-1;
@@ -308,19 +447,21 @@ void setup_timer6() {
 
 	NVIC->ISER[0] |= 1<<TIM6_DAC_IRQn;
 }
-
-int offset = 0;
-int step = 1000 * N / 100000.0 * (1 << 16);
 void TIM6_DAC_IRQHandler() {
-    // Student code goes here...
 	DAC->SWTRIGR |= DAC_SWTRIGR_SWTRIG1;
 	TIM6->SR &= ~TIM_SR_UIF;
+
 	offset += step;
 	if ((offset>>16) >= N) {
 		offset -= N<<16;
 	}
+	offset2 += step2;
+	if ((offset2>>16) >= N) {
+		offset2 -= N<<16;
+	}
 	int sample = 0;
 	sample += wavetable[offset>>16];
+	sample += wavetable[offset2>>16];
 	sample = sample / 16 + 2048;
 	if (sample > 4095) {
 		sample = 4095;
@@ -330,29 +471,64 @@ void TIM6_DAC_IRQHandler() {
 	}
 	DAC->DHR12R1 = sample;
 }
-
-void setup_timer3() {
+void setup_timer16() {
     // Student code goes here...
-	RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
-	TIM3->ARR = 10000 - 1;
-	TIM3->PSC = 4800 - 1;
-	TIM3->DIER |= TIM_DIER_UIE;
-	TIM3->CR1 |= TIM_CR1_CEN;
-
-	NVIC->ISER[0] |= 1<<TIM3_IRQn;
+	RCC->APB2ENR |= RCC_APB2ENR_TIM16EN;
+	TIM16->ARR = 10000 - 1;
+	TIM16->PSC = 1200 - 1;
+	TIM16->DIER |= TIM_DIER_UIE;
 }
-void TIM3_IRQHandler() {
-	TIM3->SR &= ~TIM_SR_UIF;
-	//step = 0;
-	if (freq == 0) {
+void TIM16_IRQHandler() {
+	TIM16->SR &= ~TIM_SR_UIF;
+	double array[26] = {783.99, 0, 880, 698.46, 0, 783.99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 932.33, 0, 880, 698.46, 0, 783.99, 0, 0, 0, 0};
+
+	freq = array[i];
+	step = freq * N / 100000.0 * (1 << 16);
+	if (i >= 26)
+		i = 0;
+	else
+		i++;
+
+	freq2 = array[j];
+	step2 = freq2 * N / 100000.0 * (1 << 16);
+	if (j >= 26)
+		j = 0;
+	else
+		j++;
+	/*if (freq == 500) {
 		freq = 1000;
 		step = freq * N / 100000.0 * (1 << 16);
 	}
 	else {
-		freq -= 100;
+		freq -= 50;
 		step = (freq) * N / 100000.0 * (1 << 16);
+	}*/
+}
+void setup_timer15() {
+    // Student code goes here...
+	RCC->APB2ENR |= RCC_APB2ENR_TIM15EN;
+	TIM15->ARR = 10000 - 1;
+	TIM15->PSC = 1200 - 1;
+	TIM15->DIER |= TIM_DIER_UIE;
+
+}
+void TIM15_IRQHandler() {
+	TIM15->SR &= ~TIM_SR_UIF;
+	double array[26] = {1567.98, 0, 1760, 1396.91, 0, 1567.98, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1864.66, 0, 1760, 1396.91, 0, 1567.98, 0, 0, 0, 0};
+	freq2 = array[j];
+	step2 = freq2 * N / 100000.0 * (1 << 16);
+	if (j >= 26)
+		j = 0;
+	else
+		j++;
+	/*if (freq2 == 500) {
+		freq2 = 0;
+		step2 = freq2 * N / 100000.0 * (1 << 16);
 	}
-	//printf("%d\n", step);
+	else {
+		freq2 += 50;
+		step2 = (freq2) * N / 100000.0 * (1 << 16);
+	}*/
 }
 void init_wavetable(void)
 {
@@ -363,114 +539,229 @@ void init_wavetable(void)
 	}
 }
 
-// Act on a command read by testbench().
-static void action(char **words) {
-    if (words[0] != 0) {
-        if (strcasecmp(words[0],"alpha") == 0) {
-            // Print the alphabet repeatedly until you press <Enter>.
-            char buf[81];
-            for(int x=0; x<80; x++)
-                buf[x] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[x%26];
-            buf[80] = '\0';
-            echo_mode = 0;
-            for(;;) {
-                putstr(buf);
-                if (fifo_newline(&input_fifo)) {
-                    echo_mode = 1;
-                    return;
-                }
-            }
-        }
 
-        if (strcasecmp(words[0],"init") == 0) {
-            if (strcasecmp(words[1],"lcd") == 0) {
-                printf("lcd command not implemenented yet\n");
-                return;
-            }
-            if (strcasecmp(words[1],"dac") == 0) {
-            	init_wavetable();
-            	setup_gpio();
-            	setup_dac();
-				setup_timer6();
-				setup_timer3();
+//Math Question Setup
+void init_TIM3() {
+	RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
+	TIM3->ARR = 1000;
+	TIM3->PSC = 48;
+	TIM3->CR1 |= TIM_CR1_CEN;
+}
+void math_eqn(){
+	srand(cnt);
+	int dig1 = rand() % 10;
+	int dig2 = rand() % 10;
+	int operation = dig1 % 4;
+	char cdig1[10] = "";
+	char cdig2[10] = "";
+	char eqn[30] = "";
 
-				return;
-            }
-        }
+	itoa(dig1, cdig1, 10);
+	strcat(eqn, cdig1);
 
-        if (strcasecmp(words[0],"gen") == 0) {
-        	freq = atoi(words[1]);
-        	step = atoi(words[1]) * N / 100000.0 * (1 << 16);
-        	return;
-        }
-        if (strcasecmp(words[0],"display1") == 0) {
-            printf("display1 command not implemented yet\n");
-            return;
-        }
-        if (strcasecmp(words[0],"display2") == 0) {
-            printf("display2 command not implemented yet\n");
-            return;
-        }
-        if (strcasecmp(words[0],"display2") == 0) {
-            printf("display2 command not implemented yet\n");
-            return;
-        }
+	switch(operation){
+		case 0: strcat(eqn, "+");
+				answer = dig1 + dig2;
+				break;
+		case 1: strcat(eqn, "-");
+				answer = dig1 - dig2;
+				break;
+		case 2: strcat(eqn, "*");
+				answer = dig1 * dig2;
+				break;
+		case 3: strcat(eqn, "/");
+				answer = dig1 / dig2;
+				break;
+	}
 
-        printf("Unrecognized command: %s\n", words[0]);
-    }
+	itoa(dig2, cdig2, 10);
+	strcat(eqn, cdig2);
+	strcat(eqn, "=");
+	display1(eqn);
+
 }
 
-//===========================================================================
-// Interact with the hardware.
-// This subroutine waits for a line of input, breaks it apart into an
-// array of words, and passes that array of words to the action()
-// subroutine.
-// The "display1" and "display2" are special words that tell it to
-// keep everything after the first space together into words[1].
-//
-void testbench(void) {
-    printf("STM32 testbench.\n");
-    for(;;) {
-        char buf[60];
-        printf("> ");
-        fgets(buf, sizeof buf - 1, stdin);
-        int sz = strlen(buf);
-        if (sz > 0)
-            buf[sz-1] = '\0';
-        char *words[7] = { 0,0,0,0,0,0,0 };
-        int i;
-        char *cp = buf;
-        for(i=0; i<6; i++) {
-            // strtok tokenizes a string, splitting it up into words that
-            // are divided by any characters in the second argument.
-            words[i] = strtok(cp," \t");
-            // Once strtok() is initialized with the buffer,
-            // subsequent calls should be made with NULL.
-            cp = 0;
-            if (words[i] == 0)
-                break;
-            if (i==0 && strcasecmp(words[0], "display1") == 0) {
-                words[1] = strtok(cp, ""); // words[1] is rest of string
-                break;
-            }
-            if (i==0 && strcasecmp(words[0], "display2") == 0) {
-                words[1] = strtok(cp, ""); // words[1] is rest of string
-                break;
-            }
-        }
-        action(words);
-    }
-}
 
+//Input systems
+void inputAlarm() {
+	int hr_ten;
+	int hr_one;
+	int min_ten;
+	int min_one;
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputAlarmHourTen");
+	while (key != '#')
+		get_key_press();
+
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 1))
+		get_key_press();
+	hr_ten = value;
+	while(key != '*')
+		get_key_press();
+
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputAlarmHourOne");
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 9))
+		get_key_press();
+	hr_one = value;
+	while(key != '*')
+		get_key_press();
+
+
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputAlarmMinTen");
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+
+	while ((value < 0) | (value > 5))
+		get_key_press();
+	min_ten = atoi(&key);
+	while(key != '*')
+		get_key_press();
+
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputAlarmMinOne");
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 9))
+		get_key_press();
+	min_one = value;
+	while(key != '*')
+		get_key_press();
+
+	nano_wait(500 * 1000 * 1000);
+	display2("Great!");
+	initAlarm(hr_ten * 10 + hr_one, min_ten*10 + min_one, 'A');
+
+}
+void inputTime() {
+	int hr_ten;
+	int hr_one;
+	int min_ten;
+	int min_one;
+	int h12;
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputTimeHourTen");
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 1))
+		get_key_press();
+	hr_ten = value;
+	while(key != '*')
+		get_key_press();
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputTimeHourOne");
+	while (key != '#')
+		get_key_press();
+
+	cnt = TIM3->CNT; // Seed for Math Problem
+/*	char a[30];
+	srand(cnt);
+	int b = rand() % 101;
+	itoa(b, a, 10);
+	display1(a);
+	*/
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 9))
+		get_key_press();
+	hr_one = value;
+	while(key != '*')
+		get_key_press();
+	nano_wait(500 * 1000 * 1000);
+	display2("InputTimeMinTen");
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 5))
+		get_key_press();
+	min_ten = value;
+	while(key != '*')
+		get_key_press();
+
+	nano_wait(500 * 1000 * 1000);
+	display2("InputTimeMinOne");
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 9))
+		get_key_press();
+	min_one = value;
+	while(key != '*')
+		get_key_press();
+
+	nano_wait(500 * 1000 * 1000);
+	display2("Great!");
+	init_RTC(hr_ten * 10 + hr_one, min_ten*10 + min_one, 'P');
+}
+void inputMath() {
+	//isAlarmOn = 1;
+	int userAnsTen;
+	int userAnsOne;
+	char userAns[10];
+	math_eqn();
+	nano_wait(500 * 1000 * 1000);
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 9))
+		get_key_press();
+	userAnsTen = value;
+	while(key != '*')
+		get_key_press();
+
+	itoa(userAnsTen*10, userAns, 10);
+	display2(userAns);
+
+	while (key != '#')
+		get_key_press();
+	nano_wait(1000 * 1000);
+	while ((value < 0) | (value > 9))
+		get_key_press();
+	userAnsOne = value;
+	while(key != '*')
+		get_key_press();
+
+	itoa(userAnsTen*10 + userAnsOne, userAns, 10);
+	display2(userAns);
+
+	nano_wait(500 * 1000 * 1000);
+	if((userAnsTen*10 + userAnsOne) == answer) {
+		display2("Correct!");
+		DAC->CR &= ~DAC_CR_EN1;
+		isAlarmOn = 1;
+
+	} else {
+		display2("Wrong!");
+		nano_wait(1000 * 1000 * 1000);
+		inputMath();
+	}
+
+}
 
 int main(void)
 {
-    tty_init();
-    //prob3();
-    //prob4();
-    //prob5();
-    testbench();
+    init_TIM14();
+    init_keypad();
+    init_TIM2();
+    init_wavetable();
+    setup_timer6();
+    setup_timer16();
+    setup_timer15();
+    init_TIM3();
+    inputTime();
+    inputAlarm();
 
-    for(;;)
-        asm("wfi");
 }
