@@ -190,6 +190,7 @@ void TIM2_IRQHandler() {
 }
 
 
+
 //Get pressed key
 void get_key_press() {
     while(1) {
@@ -210,6 +211,8 @@ void get_char() {
     keys[12] = key;
     display2(keys);
 }
+
+
 
 
 //Display SPI setup
@@ -303,6 +306,8 @@ void circdma_display2(const char *s) {
 }
 
 
+
+
 //RTC Time setup
 void init_RTC(int hr, int min, int h12) {
      RCC_APB1PeriphClockCmd(RCC_APB1Periph_PWR, ENABLE);
@@ -388,6 +393,8 @@ void TIM14_IRQHandler() {
 }
 
 
+
+
 //RTC Alarm setup
 void initAlarm(int hr, int min, char h12) {
     PWR_BackupAccessCmd(ENABLE);
@@ -426,16 +433,16 @@ void initAlarm(int hr, int min, char h12) {
     }
 }
 
-void RTC_IRQHandler(){
+void RTC_IRQHandler() {
     isAlarmOn = 1;
     display1("ALARM!!");
     RTC->ISR &= ~RTC_ISR_ALRAF;
     EXTI->PR |= EXTI_PR_PR17;
     setup_dac();
-    TIM15->CR1 |= TIM_CR1_CEN;
-    NVIC->ISER[0] |= 1<<TIM15_IRQn;
-    inputMath();
+    flag = 1;
 }
+
+
 
 
 //Alarm DAC sound setup
@@ -491,6 +498,8 @@ void setup_timer16() {
     TIM16->ARR = 10000 - 1;
     TIM16->PSC = 1200 - 1;
     TIM16->DIER |= TIM_DIER_UIE;
+    TIM16->CR1 |= TIM_CR1_CEN;
+	NVIC->ISER[0] |= 1<<TIM16_IRQn;
     NVIC_SetPriority(TIM16_IRQn, 2);
 }
 
@@ -527,7 +536,7 @@ void setup_timer15() {
     TIM15->ARR = 10000 - 1;
     TIM15->PSC = 1200 - 1;
     TIM15->DIER |= TIM_DIER_UIE;
-
+    TIM15->CR1 |= TIM_CR1_CEN;
 }
 
 void TIM15_IRQHandler() {
@@ -557,6 +566,8 @@ void init_wavetable(void)
         wavetable[x] = 32767 * sin(2 * M_PI * x / N);
     }
 }
+
+
 
 
 //Math Question Setup
@@ -598,6 +609,9 @@ void math_eqn(){
     display2(eqn);
 }
 
+
+
+
 void inputTime(){
     int tm[4];
     char time[20] = "00:00 AM";
@@ -632,6 +646,7 @@ void inputTime(){
             cnt = TIM3->CNT;
             break;
         }
+	nano_wait(1000*1000);
     }
 
     int hr = tm[0] * 10 + tm[1];
@@ -670,6 +685,7 @@ void inputAlarm(){
         }else if (key == '#'){
             break;
         }
+	nano_wait(1000*1000);
     }
 
     int hr = tm[0] * 10 + tm[1];
@@ -682,8 +698,9 @@ void inputMath() {
     srand(cnt);
     int userAns = 0;
     char ans[3];
+    memset(ans, 0, strlen(ans));
     int count = 0;
-
+    value = 0;
     while(1){
         if(count == 0) math_eqn();
         get_key_press();
@@ -708,22 +725,26 @@ void inputMath() {
             memset(ans, 0, strlen(ans));
             count = 0;
         }
+	nano_wait(1000*1000);
     }
 
     isAlarmOn = 0;
 }
+
+
+
+
 
 int main(void){
     init_TIM14();
     init_keypad();
     init_TIM2();
     init_wavetable();
+    //setup_dac();
     setup_timer6(); //DAC
     setup_timer16(); //Frequency
-    setup_timer15(); //Nothing
     init_TIM3();
     inputTime();
-
     while(1){
         display2("A-Alarm | B-Time");
         get_key_press();
@@ -732,6 +753,9 @@ int main(void){
             inputAlarm();
         }else if(key == 'B'){
             inputTime();
+        }else if (key == 'C') {
+        	if (flag == 1)
+        		inputMath();
         }
     }
 

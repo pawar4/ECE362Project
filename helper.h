@@ -39,9 +39,10 @@ int cnt = 0;
 int isAlarmOn = 1;
 int answer = 0;
 char eqn[30] = "";
+int flag = 0;
 
 #define RATE 100000
-#define N 1000
+#define N 500
 short int wavetable[N];
 int freq = 0;
 int freq2 = 0;
