@@ -190,7 +190,6 @@ void TIM2_IRQHandler() {
 }
 
 
-
 //Get pressed key
 void get_key_press() {
     while(1) {
@@ -207,7 +206,10 @@ void get_key_press() {
     }
 }
 
-
+void get_char() {
+    keys[12] = key;
+    display2(keys);
+}
 
 
 //Display SPI setup
@@ -300,149 +302,79 @@ void circdma_display2(const char *s) {
     }
 }
 
-
-
-
-//RTC Time setup
-void init_RTC(int hr, int min, int h12) {
-     RCC_APB1PeriphClockCmd(RCC_APB1Periph_PWR, ENABLE);
-     PWR_BackupAccessCmd(ENABLE);
-     RCC_LSICmd(ENABLE);
-     while(RCC_GetFlagStatus(RCC_FLAG_LSIRDY) == RESET){
-     }
-
-     RCC_RTCCLKConfig(RCC_RTCCLKSource_LSI);
-     RCC_RTCCLKCmd(ENABLE);
-     if(RTC_WaitForSynchro() == ERROR) {
-         return;
-     }
-
-     RTC_InitTypeDef init;
-     RTC_StructInit(&init);
-     init.RTC_HourFormat = RTC_HourFormat_12;
-     if(RTC_Init(&init) == ERROR) {
-         return;
-     }
-
-    if (h12 == 'A') {
-         RTC_TimeTypeDef startTime = {hr, min, 50, RTC_H12_AM};
-         if(RTC_SetTime(RTC_Format_BIN, &startTime) == ERROR) {
-             return;
-         }
-    }
-    else if (h12 == 'P') {
-        RTC_TimeTypeDef startTime = {hr, min, 50, RTC_H12_PM};
-        if(RTC_SetTime(RTC_Format_BIN, &startTime) == ERROR) {
-            return;
-        }
-    }
-    else {
-        RTC_TimeTypeDef startTime = {11, 59, 57, RTC_H12_PM};
-        if(RTC_SetTime(RTC_Format_BIN, &startTime) == ERROR) {
-            return;
-        }
-    }
-}
-
-void rtcGetTime(char* timeStr) {
-    RTC_TimeTypeDef time;
-    RTC_GetTime(RTC_Format_BIN, &time);
-    sprintf(timeStr, "%02d:%02d:%02d %s",
-            time.RTC_Hours, time.RTC_Minutes,
-            time.RTC_Seconds,
-            (time.RTC_H12 == RTC_H12_AM ? "AM" : "PM"));
-
-    if (timeStr[9] == 'A')
-    {
-        timeofday = 1;
-    }
-    else
-    {
-        timeofday = 0;
-    }
-}
-
 void init_TIM14() {
     RCC->APB1ENR |= RCC_APB1ENR_TIM14EN;
-    TIM14->PSC = 48 - 1;
-    TIM14->ARR = 1000 - 1;
+    TIM14->PSC = 24000 - 1;
+    TIM14->ARR = 625 - 1;
     TIM14->DIER |= TIM_DIER_UIE;
-
-    cmd = spi_cmd;
-    data = spi_data;
-    display1 = circdma_display1;
-    display2 = circdma_display2;
-    dma_spi_init_lcd();
 
     TIM14->CR1 |= TIM_CR1_CEN;
     NVIC->ISER[0] = 1<<TIM14_IRQn;
-    NVIC_SetPriority(TIM14_IRQn,0);
+    //NVIC_SetPriority(TIM14_IRQn,1);
+}
+
+void triggerAlarm(){
+    display1("ALARM!!");
+    setup_dac();
+    inputMath();
 }
 
 void TIM14_IRQHandler() {
-	char clockTime[16];
-	TIM14->SR &= ~TIM_SR_UIF;
-    rtcGetTime(clockTime);
-    if (isAlarmOn == 0)
-        display1(clockTime);
-}
+    TIM14->SR &= ~TIM_SR_UIF;
+    char time[12] = "";
+    char dig[8] = "";
 
-
-
-
-//RTC Alarm setup
-void initAlarm(int hr, int min, char h12) {
-    PWR_BackupAccessCmd(ENABLE);
-
-    RTC_AlarmCmd(RTC_Alarm_A, DISABLE);
-    //RTC_AlarmTypeDef init = {12, 02, 00, RTC_H12_AM};
-    if (h12 == 'A') {
-        RTC_AlarmTypeDef init = {hr, min, 00, RTC_H12_AM};
-
-        init.RTC_AlarmMask = RTC_AlarmMask_DateWeekDay;
-        RTC->WPR = 0xCA;
-        RTC->WPR = 0x53;
-        RTC->CR |= RTC_CR_ALRAIE;
-        RTC->WPR = 0xFF;
-
-        RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &init);
-        RTC_AlarmCmd(RTC_Alarm_A, ENABLE);
-        EXTI->IMR |= EXTI_IMR_MR17;
-        EXTI->RTSR |= EXTI_RTSR_TR17;
-        NVIC->ISER[0] |= 1 << RTC_IRQn;
+    //Check if alarm should be triggered
+    if(hours == hoursA && isAlarmOn){
+        if(mins == minsA && isAlarmOn){
+            triggerAlarm();
+            isAlarmOn = 0;
+        }
     }
-    else if (h12 == 'P') {
-        RTC_AlarmTypeDef init = {hr, min, 00, RTC_H12_PM};
 
-        init.RTC_AlarmMask = RTC_AlarmMask_DateWeekDay;
-        RTC->WPR = 0xCA;
-        RTC->WPR = 0x53;
-        RTC->CR |= RTC_CR_ALRAIE;
-        RTC->WPR = 0xFF;
+    //Update time
+    if(seconds < 59) seconds++;
+    else{
+        seconds = 0;
+        if(mins < 59) mins++;
+        else{
+            mins = 0;
+            if(hours < 12) hours++;
+            else{
+                hours = 1;
+                if(!strcmp(hr12, "P"))  hr12 = "A";
+                else hr12 = "P";
+            }
+        }
+    }
 
-        RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &init);
-        RTC_AlarmCmd(RTC_Alarm_A, ENABLE);
-        EXTI->IMR |= EXTI_IMR_MR17;
-        EXTI->RTSR |= EXTI_RTSR_TR17;
-        NVIC->ISER[0] |= 1 << RTC_IRQn;
+    //Display hours
+    if(!inputAlrm){
+        if(hours < 10) strcat(time, "0");
+        itoa(hours, dig, 10);
+        strcat(time, dig);
+        memset(dig, 0, strlen(dig));
+        strcat(time, ":");
+
+        //Display mins
+        if(mins < 10) strcat(time, "0");
+        itoa(mins, dig, 10);
+        strcat(time, dig);
+        memset(dig, 0, strlen(dig));
+        strcat(time, ":");
+
+        //Display seconds
+        if(seconds < 10) strcat(time, "0");
+        itoa(seconds, dig, 10);
+        strcat(time, dig);
+        memset(dig, 0, strlen(dig));
+        strcat(time, " ");
+        strcat(time, hr12);
+        strcat(time, "M");
+
+        display1(time);
     }
 }
-
-void RTC_IRQHandler() {
-    isAlarmOn = 1;
-    display1("ALARM!!");
-    RTC->ISR &= ~RTC_ISR_ALRAF;
-    EXTI->PR |= EXTI_PR_PR17;
-    //setup_dac();
-    flag = 1;
-    TIM14->CR1 &= ~TIM_CR1_CEN;
-    DAC->CR |= DAC_CR_EN1;
-    TIM6->CR1 |= TIM_CR1_CEN;
-    TIM16->CR1 |= TIM_CR1_CEN;
-}
-
-
-
 
 //Alarm DAC sound setup
 void setup_dac() {
@@ -452,7 +384,7 @@ void setup_dac() {
     DAC->CR &= ~DAC_CR_EN1;
     DAC->CR |= DAC_CR_TEN1;
     DAC->CR |= DAC_CR_TSEL1;
-    //DAC->CR |= DAC_CR_EN1;
+    DAC->CR |= DAC_CR_EN1;
 }
 
 void setup_timer6() {
@@ -460,10 +392,10 @@ void setup_timer6() {
     TIM6->ARR = 10-1;
     TIM6->PSC = 48-1;
     TIM6->DIER |= TIM_DIER_UIE;
-    //TIM6->CR1 |= TIM_CR1_CEN;
+    TIM6->CR1 |= TIM_CR1_CEN;
 
     NVIC->ISER[0] |= 1<<TIM6_DAC_IRQn;
-    NVIC_SetPriority(TIM6_DAC_IRQn, 0);
+    NVIC_SetPriority(TIM6_DAC_IRQn, 2);
 }
 
 void TIM6_DAC_IRQHandler() {
@@ -497,9 +429,7 @@ void setup_timer16() {
     TIM16->ARR = 10000 - 1;
     TIM16->PSC = 1200 - 1;
     TIM16->DIER |= TIM_DIER_UIE;
-    //TIM16->CR1 |= TIM_CR1_CEN;
-	NVIC->ISER[0] |= 1<<TIM16_IRQn;
-    NVIC_SetPriority(TIM16_IRQn, 0);
+    NVIC_SetPriority(TIM16_IRQn, 2);
 }
 
 void TIM16_IRQHandler() {
@@ -529,6 +459,34 @@ void TIM16_IRQHandler() {
     }*/
 }
 
+void setup_timer15() {
+    // Student code goes here...
+    RCC->APB2ENR |= RCC_APB2ENR_TIM15EN;
+    TIM15->ARR = 10000 - 1;
+    TIM15->PSC = 1200 - 1;
+    TIM15->DIER |= TIM_DIER_UIE;
+
+}
+
+void TIM15_IRQHandler() {
+    TIM15->SR &= ~TIM_SR_UIF;
+    double array[26] = {1567.98, 0, 1760, 1396.91, 0, 1567.98, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1864.66, 0, 1760, 1396.91, 0, 1567.98, 0, 0, 0, 0};
+    freq2 = array[j];
+    step2 = freq2 * N / 100000.0 * (1 << 16);
+    if (j >= 26)
+        j = 0;
+    else
+        j++;
+    /*if (freq2 == 500) {
+        freq2 = 0;
+        step2 = freq2 * N / 100000.0 * (1 << 16);
+    }
+    else {
+        freq2 += 50;
+        step2 = (freq2) * N / 100000.0 * (1 << 16);
+    }*/
+}
+
 void init_wavetable(void)
 {
     // Student code goes here...
@@ -539,9 +497,7 @@ void init_wavetable(void)
 }
 
 
-
-
-//Math Question Setup
+//Manual clock setup
 void init_TIM3() {
     RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
     TIM3->ARR = 1000;
@@ -580,8 +536,158 @@ void math_eqn(){
     display2(eqn);
 }
 
+void inputAlarm(){
+    int tm[4];
+    char time[20] = "00:00 AM";
+    display1(time);
+    int pos = 0;
+    int x = 0;
+    display2("Input Alarm");
+    while(1){
+        get_key_press();
 
+        if((value >= 0 && value <= 9) && pos < 5){
+            tm[x] = value;
+            x++;
+            if(pos < 8){
+                if(pos == 2) pos++;
+                time[pos] = value + '0';
+            }
+            pos++;
+            display1(time);
+        }
 
+        if(key == '*'){
+           hr12A = "P";
+           time[6] = 'P';
+           display1(time);
+           cnt = TIM3->CNT;
+           nano_wait(1000*1000*100);
+           break;
+        }else if (key == '#'){
+            hr12A = "A";
+            time[6] = 'A';
+            display1(time);
+            cnt = TIM3->CNT;
+            break;
+        }
+    }
+
+    hoursA = tm[0] * 10 + tm[1];
+    minsA = tm[2] * 10 + tm[3];
+    isAlarmOn = 1;
+    inputAlrm = 0;
+}
+
+void inputMath() {
+    srand(cnt);
+    int userAns = 0;
+    char ans[3];
+    int count = 0;
+
+    while(1){
+        if(count == 0) math_eqn();
+        get_key_press();
+
+        if(key != '#'){
+            userAns = userAns * 10 + value;
+            ans[count] = value + '0';
+            strcat(eqn, ans);
+            display2(eqn);
+            count++;
+        }
+
+        if(key == '#' && userAns == answer){
+            display2("Right Answer!!");
+            TIM6->CR1 &= ~TIM_CR1_CEN; //Turns off DAC
+            break;
+        }else if(key == '#' && userAns != answer){
+            display2("Wrong Answer!!");
+            nano_wait(1000* 1000*250);
+            userAns = 0;
+            memset(eqn, 0, strlen(eqn));
+            memset(ans, 0, strlen(ans));
+            count = 0;
+        }
+    }
+
+}
+
+void EXTI4_15_IRQHandler(){
+    EXTI_ClearITPendingBit(EXTI_Line15);
+    char time[12] = "";
+    char dig[8] = "";
+
+    //Check if alarm should be triggered
+    if(hours == hoursA && isAlarmOn){
+        if(mins == minsA && isAlarmOn){
+            triggerAlarm();
+            isAlarmOn = 0;
+        }
+    }
+
+    //Update time
+    if(seconds < 59) seconds++;
+    else{
+        seconds = 0;
+        if(mins < 59) mins++;
+        else{
+            mins = 0;
+            if(hours < 12) hours++;
+            else{
+                hours = 1;
+                if(!strcmp(hr12, "P"))  hr12 = "A";
+                else hr12 = "P";
+            }
+        }
+    }
+
+    if(!inputAlrm){
+        //Display hours
+        if(hours < 10) strcat(time, "0");
+        itoa(hours, dig, 10);
+        strcat(time, dig);
+        memset(dig, 0, strlen(dig));
+        strcat(time, ":");
+
+        //Display mins
+        if(mins < 10) strcat(time, "0");
+        itoa(mins, dig, 10);
+        strcat(time, dig);
+        memset(dig, 0, strlen(dig));
+        strcat(time, ":");
+
+        //Display seconds
+        if(seconds < 10) strcat(time, "0");
+        itoa(seconds, dig, 10);
+        strcat(time, dig);
+        memset(dig, 0, strlen(dig));
+        strcat(time, " ");
+        strcat(time, hr12);
+        strcat(time, "M");
+
+        display1(time);
+    }
+}
+
+void initEXTI(){
+    //Initialized line 15 connected to PB15
+    RCC->AHBENR |= RCC_AHBENR_GPIOBEN;
+    RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
+    GPIOB->MODER &= ~GPIO_MODER_MODER15;
+
+    SYSCFG_EXTILineConfig(EXTI_PortSourceGPIOB, EXTI_PinSource15);
+
+    EXTI_InitTypeDef EXTI_InitStruct;
+    EXTI_InitStruct.EXTI_Line = EXTI_Line15;
+    EXTI_InitStruct.EXTI_Mode = EXTI_Mode_Interrupt;
+    EXTI_InitStruct.EXTI_Trigger = EXTI_Trigger_Rising;
+    EXTI_InitStruct.EXTI_LineCmd = ENABLE;
+    EXTI_Init(&EXTI_InitStruct);
+
+    NVIC->ISER[0] |= 1 << EXTI4_15_IRQn;
+    NVIC_SetPriority(EXTI4_15_IRQn, 0);
+}
 
 void inputTime(){
     int tm[4];
@@ -589,7 +695,6 @@ void inputTime(){
     display1(time);
     int pos = 0;
     int x = 0;
-    char h12 = 'A';
     display2("Input Time");
 
     while(1){
@@ -608,133 +713,55 @@ void inputTime(){
         }
 
         if(key == '*'){
-           h12 = 'P';
-           time[6] = h12;
+           hr12 = "P";
+           time[6] = 'P';
            display1(time);
            cnt = TIM3->CNT;
+           nano_wait(1000*1000*100);
            break;
         }else if (key == '#'){
+            hr12 = "A";
+            time[6] = 'A';
+            display1(time);
             cnt = TIM3->CNT;
             break;
         }
-	nano_wait(1000*1000);
     }
 
-    int hr = tm[0] * 10 + tm[1];
-    int min = tm[2] * 10 + tm[3];
-    init_RTC(hr, min, h12);
-    isAlarmOn = 0;
-}
-
-void inputAlarm(){
-    int tm[4];
-    char time[20] = "00:00 AM";
-    display1(time);
-    int pos = 0;
-    int x = 0;
-    char h12 = 'A';
-    display2("Input Alarm");
-    while(1){
-        get_key_press();
-
-        if((value >= 0 && value <= 9) && pos < 5){
-            tm[x] = value;
-            x++;
-            if(pos < 8){
-                if(pos == 2) pos++;
-                time[pos] = value + '0';
-            }
-            pos++;
-            display1(time);
-        }
-
-        if(key == '*'){
-           h12 = 'P';
-           time[6] = h12;
-           display1(time);
-           break;
-        }else if (key == '#'){
-            break;
-        }
-	nano_wait(1000*1000);
-    }
-
-    int hr = tm[0] * 10 + tm[1];
-    int min = tm[2] * 10 + tm[3];
-    initAlarm(hr, min, h12);
-    isAlarmOn = 0;
-}
-
-void inputMath() {
-    int userAns = 0;
-    char ans;
-    int temp;
-    memset(ans, 0, strlen(ans));
-    value = 0;
-    math_eqn();
-    while(1){
-        get_key_press();
-
-        if(key != '#'){
-            userAns = userAns * 10 + value;
-            temp = value;
-            itoa(temp, &ans, 10);
-            strcat(eqn, &ans);
-            display2(eqn);
-        }
-
-        if(key == '#' && userAns == answer){
-            display2("Right Answer!!");
-            //TIM6->CR1 &= ~TIM_CR1_CEN;
-            TIM14->CR1 |= TIM_CR1_CEN;
-            TIM6->CR1 &= ~TIM_CR1_CEN;
-            TIM16->CR1 &= ~TIM_CR1_CEN;
-            userAns = 0;
-            memset(eqn, 0, strlen(eqn));
-			memset(ans, 0, strlen(ans));
-
-            break;
-        }else if(key == '#' && userAns != answer){
-            display2("Wrong Answer!!");
-            nano_wait(1000* 1000*250);
-            userAns = 0;
-            memset(eqn, 0, strlen(eqn));
-            memset(ans, 0, strlen(ans));
-            math_eqn();
-        }
-	nano_wait(1000*1000);
-    }
+    hours = tm[0] * 10 + tm[1];
+    mins = tm[2] * 10 + tm[3];
+    seconds = 0;
+    //init_TIM14();
+    initEXTI();
 
     isAlarmOn = 0;
-    flag = 0;
 }
-
-
-
-
 
 int main(void){
-    init_TIM14();
+    cmd = spi_cmd;
+    data = spi_data;
+    display1 = circdma_display1;
+    display2 = circdma_display2;
+    dma_spi_init_lcd();
+    display2(keys);
+
     init_keypad();
     init_TIM2();
     init_wavetable();
-    setup_dac();
     setup_timer6(); //DAC
     setup_timer16(); //Frequency
+    //setup_timer15(); //Nothing
     init_TIM3();
     inputTime();
-    srand(cnt);
+
     while(1){
         display2("A-Alarm | B-Time");
         get_key_press();
         if(key == 'A'){
-            isAlarmOn = 1;
+            inputAlrm = 1;
             inputAlarm();
         }else if(key == 'B'){
             inputTime();
-        }else if (key == 'C') {
-        	if (flag == 1)
-        		inputMath();
         }
     }
 

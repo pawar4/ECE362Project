@@ -25,20 +25,34 @@ void (*cmd)(char b) = 0;
 void (*data)(char b) = 0;
 void (*display1)(const char *) = 0;
 void (*display2)(const char *) = 0;
+int8_t history[16] = {0};
+int8_t lookup[16] = {1,4,7,0xe,2,5,8,0,3,6,9,0xf,0xa,0xb,0xc,0xd};
+char char_lookup[16] = {'1','4','7','*','2','5','8','0','3','6','9','#','A','B','C','D'};
 int timeofday = 9;
 char clockTime[16];
 int col = 1;
+char keys[16] = {"Key Pressed:"};
 char key;
 int value;
 int press = 0;
 int cnt = 0;
-int isAlarmOn = 1;
+int isAlarmOn = 0;
 int answer = 0;
 char eqn[30] = "";
-int flag = 0;
+
+//Start of manual clock
+int hours = 0;
+int mins = 0;
+int seconds = 0;
+char * hr12 = "P";
+int hoursA = 0;
+int minsA = 0;
+int secondsA = 0;
+char * hr12A = "P";
+int inputAlrm = 0;
 
 #define RATE 100000
-#define N 500
+#define N 1000
 short int wavetable[N];
 int freq = 0;
 int freq2 = 0;
