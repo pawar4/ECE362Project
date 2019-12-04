@@ -207,11 +207,6 @@ void get_key_press() {
     }
 }
 
-void get_char() {
-    keys[12] = key;
-    display2(keys);
-}
-
 
 
 
@@ -378,7 +373,6 @@ void init_TIM14() {
     display1 = circdma_display1;
     display2 = circdma_display2;
     dma_spi_init_lcd();
-    display2(keys);
 
     TIM14->CR1 |= TIM_CR1_CEN;
     NVIC->ISER[0] = 1<<TIM14_IRQn;
@@ -386,7 +380,8 @@ void init_TIM14() {
 }
 
 void TIM14_IRQHandler() {
-    TIM14->SR &= ~TIM_SR_UIF;
+	char clockTime[16];
+	TIM14->SR &= ~TIM_SR_UIF;
     rtcGetTime(clockTime);
     if (isAlarmOn == 0)
         display1(clockTime);
@@ -438,8 +433,12 @@ void RTC_IRQHandler() {
     display1("ALARM!!");
     RTC->ISR &= ~RTC_ISR_ALRAF;
     EXTI->PR |= EXTI_PR_PR17;
-    setup_dac();
+    //setup_dac();
     flag = 1;
+    TIM14->CR1 &= ~TIM_CR1_CEN;
+    DAC->CR |= DAC_CR_EN1;
+    TIM6->CR1 |= TIM_CR1_CEN;
+    TIM16->CR1 |= TIM_CR1_CEN;
 }
 
 
@@ -453,7 +452,7 @@ void setup_dac() {
     DAC->CR &= ~DAC_CR_EN1;
     DAC->CR |= DAC_CR_TEN1;
     DAC->CR |= DAC_CR_TSEL1;
-    DAC->CR |= DAC_CR_EN1;
+    //DAC->CR |= DAC_CR_EN1;
 }
 
 void setup_timer6() {
@@ -461,10 +460,10 @@ void setup_timer6() {
     TIM6->ARR = 10-1;
     TIM6->PSC = 48-1;
     TIM6->DIER |= TIM_DIER_UIE;
-    TIM6->CR1 |= TIM_CR1_CEN;
+    //TIM6->CR1 |= TIM_CR1_CEN;
 
     NVIC->ISER[0] |= 1<<TIM6_DAC_IRQn;
-    NVIC_SetPriority(TIM6_DAC_IRQn, 2);
+    NVIC_SetPriority(TIM6_DAC_IRQn, 0);
 }
 
 void TIM6_DAC_IRQHandler() {
@@ -498,9 +497,9 @@ void setup_timer16() {
     TIM16->ARR = 10000 - 1;
     TIM16->PSC = 1200 - 1;
     TIM16->DIER |= TIM_DIER_UIE;
-    TIM16->CR1 |= TIM_CR1_CEN;
+    //TIM16->CR1 |= TIM_CR1_CEN;
 	NVIC->ISER[0] |= 1<<TIM16_IRQn;
-    NVIC_SetPriority(TIM16_IRQn, 2);
+    NVIC_SetPriority(TIM16_IRQn, 0);
 }
 
 void TIM16_IRQHandler() {
@@ -527,34 +526,6 @@ void TIM16_IRQHandler() {
     else {
         freq -= 50;
         step = (freq) * N / 100000.0 * (1 << 16);
-    }*/
-}
-
-void setup_timer15() {
-    // Student code goes here...
-    RCC->APB2ENR |= RCC_APB2ENR_TIM15EN;
-    TIM15->ARR = 10000 - 1;
-    TIM15->PSC = 1200 - 1;
-    TIM15->DIER |= TIM_DIER_UIE;
-    TIM15->CR1 |= TIM_CR1_CEN;
-}
-
-void TIM15_IRQHandler() {
-    TIM15->SR &= ~TIM_SR_UIF;
-    double array[26] = {1567.98, 0, 1760, 1396.91, 0, 1567.98, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1864.66, 0, 1760, 1396.91, 0, 1567.98, 0, 0, 0, 0};
-    freq2 = array[j];
-    step2 = freq2 * N / 100000.0 * (1 << 16);
-    if (j >= 26)
-        j = 0;
-    else
-        j++;
-    /*if (freq2 == 500) {
-        freq2 = 0;
-        step2 = freq2 * N / 100000.0 * (1 << 16);
-    }
-    else {
-        freq2 += 50;
-        step2 = (freq2) * N / 100000.0 * (1 << 16);
     }*/
 }
 
@@ -695,27 +666,33 @@ void inputAlarm(){
 }
 
 void inputMath() {
-    srand(cnt);
     int userAns = 0;
-    char ans[3];
+    char ans;
+    int temp;
     memset(ans, 0, strlen(ans));
-    int count = 0;
     value = 0;
+    math_eqn();
     while(1){
-        if(count == 0) math_eqn();
         get_key_press();
 
         if(key != '#'){
             userAns = userAns * 10 + value;
-            ans[count] = value + '0';
-            strcat(eqn, ans);
+            temp = value;
+            itoa(temp, &ans, 10);
+            strcat(eqn, &ans);
             display2(eqn);
-            count++;
         }
 
         if(key == '#' && userAns == answer){
             display2("Right Answer!!");
+            //TIM6->CR1 &= ~TIM_CR1_CEN;
+            TIM14->CR1 |= TIM_CR1_CEN;
             TIM6->CR1 &= ~TIM_CR1_CEN;
+            TIM16->CR1 &= ~TIM_CR1_CEN;
+            userAns = 0;
+            memset(eqn, 0, strlen(eqn));
+			memset(ans, 0, strlen(ans));
+
             break;
         }else if(key == '#' && userAns != answer){
             display2("Wrong Answer!!");
@@ -723,12 +700,13 @@ void inputMath() {
             userAns = 0;
             memset(eqn, 0, strlen(eqn));
             memset(ans, 0, strlen(ans));
-            count = 0;
+            math_eqn();
         }
 	nano_wait(1000*1000);
     }
 
     isAlarmOn = 0;
+    flag = 0;
 }
 
 
@@ -740,11 +718,12 @@ int main(void){
     init_keypad();
     init_TIM2();
     init_wavetable();
-    //setup_dac();
+    setup_dac();
     setup_timer6(); //DAC
     setup_timer16(); //Frequency
     init_TIM3();
     inputTime();
+    srand(cnt);
     while(1){
         display2("A-Alarm | B-Time");
         get_key_press();
