@@ -189,7 +189,6 @@ void TIM2_IRQHandler() {
     }
 }
 
-
 //Get pressed key
 void get_key_press() {
     while(1) {
@@ -205,12 +204,6 @@ void get_key_press() {
         }
     }
 }
-
-void get_char() {
-    keys[12] = key;
-    display2(keys);
-}
-
 
 //Display SPI setup
 void spi_cmd(char b) {
@@ -302,79 +295,6 @@ void circdma_display2(const char *s) {
     }
 }
 
-void init_TIM14() {
-    RCC->APB1ENR |= RCC_APB1ENR_TIM14EN;
-    TIM14->PSC = 24000 - 1;
-    TIM14->ARR = 625 - 1;
-    TIM14->DIER |= TIM_DIER_UIE;
-
-    TIM14->CR1 |= TIM_CR1_CEN;
-    NVIC->ISER[0] = 1<<TIM14_IRQn;
-    //NVIC_SetPriority(TIM14_IRQn,1);
-}
-
-void triggerAlarm(){
-    display1("ALARM!!");
-    setup_dac();
-    inputMath();
-}
-
-void TIM14_IRQHandler() {
-    TIM14->SR &= ~TIM_SR_UIF;
-    char time[12] = "";
-    char dig[8] = "";
-
-    //Check if alarm should be triggered
-    if(hours == hoursA && isAlarmOn){
-        if(mins == minsA && isAlarmOn){
-            triggerAlarm();
-            isAlarmOn = 0;
-        }
-    }
-
-    //Update time
-    if(seconds < 59) seconds++;
-    else{
-        seconds = 0;
-        if(mins < 59) mins++;
-        else{
-            mins = 0;
-            if(hours < 12) hours++;
-            else{
-                hours = 1;
-                if(!strcmp(hr12, "P"))  hr12 = "A";
-                else hr12 = "P";
-            }
-        }
-    }
-
-    //Display hours
-    if(!inputAlrm){
-        if(hours < 10) strcat(time, "0");
-        itoa(hours, dig, 10);
-        strcat(time, dig);
-        memset(dig, 0, strlen(dig));
-        strcat(time, ":");
-
-        //Display mins
-        if(mins < 10) strcat(time, "0");
-        itoa(mins, dig, 10);
-        strcat(time, dig);
-        memset(dig, 0, strlen(dig));
-        strcat(time, ":");
-
-        //Display seconds
-        if(seconds < 10) strcat(time, "0");
-        itoa(seconds, dig, 10);
-        strcat(time, dig);
-        memset(dig, 0, strlen(dig));
-        strcat(time, " ");
-        strcat(time, hr12);
-        strcat(time, "M");
-
-        display1(time);
-    }
-}
 
 //Alarm DAC sound setup
 void setup_dac() {
@@ -384,7 +304,7 @@ void setup_dac() {
     DAC->CR &= ~DAC_CR_EN1;
     DAC->CR |= DAC_CR_TEN1;
     DAC->CR |= DAC_CR_TSEL1;
-    DAC->CR |= DAC_CR_EN1;
+    //DAC->CR |= DAC_CR_EN1;
 }
 
 void setup_timer6() {
@@ -392,10 +312,10 @@ void setup_timer6() {
     TIM6->ARR = 10-1;
     TIM6->PSC = 48-1;
     TIM6->DIER |= TIM_DIER_UIE;
-    TIM6->CR1 |= TIM_CR1_CEN;
+    //TIM6->CR1 |= TIM_CR1_CEN;
 
     NVIC->ISER[0] |= 1<<TIM6_DAC_IRQn;
-    NVIC_SetPriority(TIM6_DAC_IRQn, 2);
+    NVIC_SetPriority(TIM6_DAC_IRQn, 0);
 }
 
 void TIM6_DAC_IRQHandler() {
@@ -413,7 +333,7 @@ void TIM6_DAC_IRQHandler() {
     int sample = 0;
     sample += wavetable[offset>>16];
     sample += wavetable[offset2>>16];
-    sample = sample / 16 + 2048;
+    sample = sample / 32 + 2048;
     if (sample > 4095) {
         sample = 4095;
     }
@@ -429,7 +349,8 @@ void setup_timer16() {
     TIM16->ARR = 10000 - 1;
     TIM16->PSC = 1200 - 1;
     TIM16->DIER |= TIM_DIER_UIE;
-    NVIC_SetPriority(TIM16_IRQn, 2);
+    NVIC->ISER[0] |= 1<<TIM16_IRQn;
+    NVIC_SetPriority(TIM16_IRQn, 0);
 }
 
 void TIM16_IRQHandler() {
@@ -449,42 +370,6 @@ void TIM16_IRQHandler() {
         j = 0;
     else
         j++;
-    /*if (freq == 500) {
-        freq = 1000;
-        step = freq * N / 100000.0 * (1 << 16);
-    }
-    else {
-        freq -= 50;
-        step = (freq) * N / 100000.0 * (1 << 16);
-    }*/
-}
-
-void setup_timer15() {
-    // Student code goes here...
-    RCC->APB2ENR |= RCC_APB2ENR_TIM15EN;
-    TIM15->ARR = 10000 - 1;
-    TIM15->PSC = 1200 - 1;
-    TIM15->DIER |= TIM_DIER_UIE;
-
-}
-
-void TIM15_IRQHandler() {
-    TIM15->SR &= ~TIM_SR_UIF;
-    double array[26] = {1567.98, 0, 1760, 1396.91, 0, 1567.98, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1864.66, 0, 1760, 1396.91, 0, 1567.98, 0, 0, 0, 0};
-    freq2 = array[j];
-    step2 = freq2 * N / 100000.0 * (1 << 16);
-    if (j >= 26)
-        j = 0;
-    else
-        j++;
-    /*if (freq2 == 500) {
-        freq2 = 0;
-        step2 = freq2 * N / 100000.0 * (1 << 16);
-    }
-    else {
-        freq2 += 50;
-        step2 = (freq2) * N / 100000.0 * (1 << 16);
-    }*/
 }
 
 void init_wavetable(void)
@@ -496,7 +381,6 @@ void init_wavetable(void)
     }
 }
 
-
 //Manual clock setup
 void init_TIM3() {
     RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
@@ -506,11 +390,12 @@ void init_TIM3() {
 }
 
 void math_eqn(){
-    int dig1 = rand() % 10;
-    int dig2 = rand() % 10;
+    int dig1 = (rand() % 10) + 1;
+    int dig2 = (rand() % 10) + 1;
     int operation = dig1 % 4;
     char cdig1[10] = "";
     char cdig2[10] = "";
+    int temp = 0;
 
     itoa(dig1, cdig1, 10);
     strcat(eqn, cdig1);
@@ -520,6 +405,12 @@ void math_eqn(){
                 answer = dig1 + dig2;
                 break;
         case 1: strcat(eqn, "-");
+                if(dig1 < dig2){
+                  temp = dig2;
+                  dig2 = dig1;
+                  dig1 = temp;
+                }
+
                 answer = dig1 - dig2;
                 break;
         case 2: strcat(eqn, "*");
@@ -570,47 +461,71 @@ void inputAlarm(){
             display1(time);
             cnt = TIM3->CNT;
             break;
+        }else if (key == 'D'){
+            if(pos == 3)pos -= 2;
+            else if(pos > 0) pos--;
+            time[pos] = '0';
+            display1(time);
         }
     }
 
     hoursA = tm[0] * 10 + tm[1];
     minsA = tm[2] * 10 + tm[3];
     isAlarmOn = 1;
-    inputAlrm = 0;
+    inputAlrm = 0; //Display time again
 }
 
 void inputMath() {
     srand(cnt);
     int userAns = 0;
-    char ans[3];
+    char ans = 0;
     int count = 0;
+    int temp = 0;
+    int wrong = 0;
 
     while(1){
         if(count == 0) math_eqn();
         get_key_press();
 
-        if(key != '#'){
+        if(key >= '0' && key <= '9'){
             userAns = userAns * 10 + value;
-            ans[count] = value + '0';
-            strcat(eqn, ans);
+            temp = value;
+            itoa(temp, &ans, 10);
+            strcat(eqn, &ans);
             display2(eqn);
             count++;
+        }else if(key == 'D'){
+            userAns /= 10;
+            int len = strlen(eqn);
+            if(eqn[len-1] != '=') eqn[len - 1] = 0;
+            display2(eqn);
         }
 
         if(key == '#' && userAns == answer){
             display2("Right Answer!!");
-            TIM6->CR1 &= ~TIM_CR1_CEN; //Turns off DAC
+            TIM6->CR1 &= ~TIM_CR1_CEN;
+            nano_wait(1000* 1000*250);
+            memset(eqn, 0, strlen(eqn));
+            memset(&ans, 0, strlen(&ans));
+            TIM16->CR1 &= ~TIM_CR1_CEN;
+            TIM16->ARR = 10000 - 1;
+            TIM16->PSC = 1200 - 1;
+            TIM16->CR1 |= TIM_CR1_CEN;
             break;
         }else if(key == '#' && userAns != answer){
-            display2("Wrong Answer!!");
-            nano_wait(1000* 1000*250);
+            wrong++;
+            TIM16->CR1 &= ~TIM_CR1_CEN;
+            if(wrong < 3) TIM16->ARR /= 2;
+            TIM16->CR1 |= TIM_CR1_CEN;
             userAns = 0;
             memset(eqn, 0, strlen(eqn));
-            memset(ans, 0, strlen(ans));
+            memset(&ans, 0, strlen(&ans));
             count = 0;
         }
     }
-
+    isAlarmOn = 0;
+    inputAlrm = 0;
+    DAC->CR &= ~DAC_CR_EN1;
 }
 
 void EXTI4_15_IRQHandler(){
@@ -621,25 +536,38 @@ void EXTI4_15_IRQHandler(){
     //Check if alarm should be triggered
     if(hours == hoursA && isAlarmOn){
         if(mins == minsA && isAlarmOn){
-            triggerAlarm();
-            isAlarmOn = 0;
+            display1("ALARM!!");
+            DAC->CR |= DAC_CR_EN1;
+            TIM6->CR1 |= TIM_CR1_CEN;
+            TIM16->CR1 |= TIM_CR1_CEN;
+            inputAlrm = 1;
+            isAlarmOn = 1;
         }
     }
 
     //Update time
-    if(seconds < 59) seconds++;
-    else{
-        seconds = 0;
-        if(mins < 59) mins++;
+    if(clk == 3600){
+        clk = 0;
+        if(seconds < 59) seconds++;
         else{
-            mins = 0;
-            if(hours < 12) hours++;
+            seconds = 0;
+            if(mins < 59) mins++;
             else{
-                hours = 1;
-                if(!strcmp(hr12, "P"))  hr12 = "A";
-                else hr12 = "P";
+                mins = 0;
+                if(hours < 12){
+                    hours++;
+                    if(hours == 12){
+                        if(!strcmp(hr12, "P"))  hr12 = "A";
+                        else hr12 = "P";
+                    }
+                }
+                else{
+                    hours = 1;
+                }
             }
         }
+    }else{
+        clk++;
     }
 
     if(!inputAlrm){
@@ -726,15 +654,18 @@ void inputTime(){
             cnt = TIM3->CNT;
             break;
         }
+        else if (key == 'D'){
+            if(pos == 3)pos -= 2;
+            else if(pos > 0) pos--;
+            time[pos] = '0';
+            display1(time);
+        }
     }
 
     hours = tm[0] * 10 + tm[1];
     mins = tm[2] * 10 + tm[3];
     seconds = 0;
-    //init_TIM14();
     initEXTI();
-
-    isAlarmOn = 0;
 }
 
 int main(void){
@@ -743,14 +674,13 @@ int main(void){
     display1 = circdma_display1;
     display2 = circdma_display2;
     dma_spi_init_lcd();
-    display2(keys);
 
     init_keypad();
     init_TIM2();
     init_wavetable();
+    setup_dac();
     setup_timer6(); //DAC
     setup_timer16(); //Frequency
-    //setup_timer15(); //Nothing
     init_TIM3();
     inputTime();
 
@@ -762,6 +692,8 @@ int main(void){
             inputAlarm();
         }else if(key == 'B'){
             inputTime();
+        }else if(key == 'C'){
+            if (isAlarmOn) inputMath();
         }
     }
 
