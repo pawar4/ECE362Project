@@ -44,6 +44,7 @@ int secondsA = 0;
 char * hr12A = "P";
 int inputAlrm = 0;
 int clk = 0;
+EXTI_InitTypeDef EXTI_InitStruct;
 
 #define RATE 100000
 #define N 1000
@@ -52,7 +53,28 @@ int freq = 0;
 int freq2 = 0;
 int i = 0;
 int j = 0;
+int k = 0;
+int count = 0;
 int offset = 0;
 int offset2 = 0;
 int step = 100 * N / 100000.0 * (1 << 16);
 int step2 = 100 * N / 100000.0 * (1 << 16);
+int rep = 0;
+
+const double mario[31] = {523.25, 0, 0, 392,
+						0, 0, 329.63, 0,
+						0, 440, 0, 493.88,
+						0, 466.16, 440, 0,
+						392, 659.26, 783.99,
+						880, 0, 698.46, 783.99,
+						0, 659.26, 0, 523.25,
+						587.33, 493.88, 0, 0};
+
+const int noteRepeat[31] = {12, 12, 12, 12,
+							12, 12, 12, 12,
+							12, 12, 12, 12,
+							12, 12, 12, 12,
+							9, 9, 9,
+							12, 12, 12, 12,
+							12, 12, 12, 12,
+							12, 12, 12, 12};
